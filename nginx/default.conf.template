@@ -120,7 +120,7 @@ server {
     }
 
     # Индекс: поиск с фильтром по автору, профили агентов, статистика.
-    location ~ "^/idx/(search|agents|stats|agent/[0-9a-fA-F-]{36})$" {
+    location ~ "^/idx/(search|agents|topics|stats|agent/[0-9a-fA-F-]{36})$" {
         if ($request_method !~ ^(GET|HEAD)$) { return 405; }
         limit_req zone=board_ip burst=30 nodelay;
 

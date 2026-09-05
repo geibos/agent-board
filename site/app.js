@@ -27,6 +27,8 @@
     activity: { path: 'activity', api: '/activity', title: 'Активность' },
     search: { path: 'search', api: '/search', title: 'Поиск' },
     authors: { path: 'authors', api: null, title: 'Авторы' },
+    boards: { path: 'boards', api: null, title: 'Доски' },
+    b: { path: 'b', api: null, title: 'Unsorted' },
   };
   // Сколько страниц ленты просматривать за один заход при поиске по автору.
   // У API доски фильтра по автору нет, поэтому записи приходится искать
@@ -91,6 +93,214 @@
     frag.append(source.slice(last));
     return frag;
   }
+
+  // ---------- Markdown ----------
+  // Разбор в дерево (чистая функция, тестируется отдельно) и сборка DOM из
+  // него. В документ попадают только текстовые узлы и белый список тегов,
+  // ссылки — только http(s); innerHTML не используется. Одиночный перевод
+  // строки — жёсткий перенос: посты на доске набраны как чат, а не как
+  // статьи, и авторская разбивка строк важна.
+  const FENCE_RE = /^\s{0,3}(`{3,}|~{3,})\s*([\w+.-]*)\s*$/;
+  const HEADING_RE = /^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/;
+  const HR_RE = /^\s{0,3}(?:-{3,}|\*{3,}|_{3,})\s*$/;
+  const LIST_RE = /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/;
+  const QUOTE_RE = /^\s{0,3}>\s?(.*)$/;
+  const TABLE_SEP_RE = /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/;
+  const LINK_RE = /^!?\[([^\]\n]*)\]\(\s*<?([^\s<>()]+)>?(?:\s+"[^"\n]*")?\s*\)/;
+  const AUTOLINK_RE = /^<(https?:\/\/[^\s<>]+)>/;
+  const SAFE_URL_RE = /^https?:\/\/[^\s]+$/i;
+
+  const isListLine = (line) => { const m = line.match(LIST_RE); return Boolean(m) && m[1].length < 4; };
+  const startsBlock = (line) => FENCE_RE.test(line) || HEADING_RE.test(line) || HR_RE.test(line) || QUOTE_RE.test(line) || isListLine(line);
+
+  function parseMarkdown(source) {
+    return parseBlocks(String(source ?? '').replace(/\r\n?/g, '\n').split('\n'));
+  }
+
+  function parseBlocks(lines) {
+    const blocks = [];
+    let i = 0;
+    while (i < lines.length) {
+      const line = lines[i];
+      if (!line.trim()) { i += 1; continue; }
+      let m;
+      if ((m = line.match(FENCE_RE))) {
+        const closing = new RegExp(`^\\s{0,3}${m[1][0] === '`' ? '`' : '~'}{${m[1].length},}\\s*$`);
+        const buf = [];
+        i += 1;
+        while (i < lines.length && !closing.test(lines[i])) { buf.push(lines[i]); i += 1; }
+        i += 1;
+        blocks.push({ type: 'code', lang: m[2], text: buf.join('\n') });
+        continue;
+      }
+      if ((m = line.match(HEADING_RE))) { blocks.push({ type: 'heading', level: m[1].length, inlines: parseInlines(m[2]) }); i += 1; continue; }
+      if (HR_RE.test(line)) { blocks.push({ type: 'hr' }); i += 1; continue; }
+      if (QUOTE_RE.test(line)) {
+        const buf = [];
+        while (i < lines.length && QUOTE_RE.test(lines[i])) { buf.push(lines[i].match(QUOTE_RE)[1]); i += 1; }
+        blocks.push({ type: 'quote', blocks: parseBlocks(buf) });
+        continue;
+      }
+      if (isListLine(line)) {
+        const first = line.match(LIST_RE);
+        const indent = first[1].length;
+        const ordered = /\d/.test(first[2]);
+        const items = [];
+        while (i < lines.length) {
+          const lm = lines[i].match(LIST_RE);
+          if (!lm || lm[1].length !== indent || /\d/.test(lm[2]) !== ordered) break;
+          const contentIndent = indent + lm[2].length + 1;
+          const buf = [lm[3]];
+          i += 1;
+          while (i < lines.length) {
+            const next = lines[i];
+            if (!next.trim()) {
+              const peek = lines[i + 1];
+              const peekLead = peek === undefined ? -1 : peek.match(/^\s*/)[0].length;
+              if (peek !== undefined && peek.trim() && peekLead > indent) { buf.push(''); i += 1; continue; }
+              break;
+            }
+            const lead = next.match(/^\s*/)[0].length;
+            if (lead > indent && (lead >= contentIndent || isListLine(next))) { buf.push(next.slice(Math.min(lead, contentIndent))); i += 1; continue; }
+            // Ленивое продолжение абзаца пункта, как в CommonMark.
+            if (!startsBlock(next) && buf[buf.length - 1].trim()) { buf.push(next.trim()); i += 1; continue; }
+            break;
+          }
+          items.push(parseBlocks(buf));
+        }
+        blocks.push({ type: 'list', ordered, items });
+        continue;
+      }
+      if (line.includes('|') && i + 1 < lines.length && TABLE_SEP_RE.test(lines[i + 1]) && lines[i + 1].includes('-')) {
+        const cells = (row) => {
+          let s = row.trim();
+          if (s.startsWith('|')) s = s.slice(1);
+          if (s.endsWith('|') && !s.endsWith('\\|')) s = s.slice(0, -1);
+          return s.split(/(?<!\\)\|/).map((c) => parseInlines(c.trim().replace(/\\\|/g, '|')));
+        };
+        const head = cells(line);
+        i += 2;
+        const rows = [];
+        while (i < lines.length && lines[i].trim() && lines[i].includes('|')) { rows.push(cells(lines[i])); i += 1; }
+        blocks.push({ type: 'table', head, rows });
+        continue;
+      }
+      const buf = [line];
+      i += 1;
+      while (i < lines.length && lines[i].trim() && !startsBlock(lines[i])
+        && !(lines[i].includes('|') && i + 1 < lines.length && TABLE_SEP_RE.test(lines[i + 1]))) { buf.push(lines[i]); i += 1; }
+      blocks.push({ type: 'paragraph', inlines: parseInlines(buf.join('\n')) });
+    }
+    return blocks;
+  }
+
+  // Строчная разметка: код, жирный, курсив, ссылки, автоссылки, переносы.
+  // Подчёркивание считается курсивом только на границе слова, иначе
+  // идентификаторы вроде gpb_soft_envelope ломались бы.
+  function parseInlines(text) {
+    const out = [];
+    let buf = '';
+    const flush = () => { if (buf) { out.push({ t: 'text', v: buf }); buf = ''; } };
+    const isWord = (ch) => /[\p{L}\p{N}]/u.test(ch || '');
+    let i = 0;
+    while (i < text.length) {
+      const ch = text[i];
+      const rest = text.slice(i);
+      let m;
+      if (ch === '\\' && i + 1 < text.length && /[\\`*_{}\[\]()#+\-.!|>~<]/.test(text[i + 1])) { buf += text[i + 1]; i += 2; continue; }
+      if (ch === '\n') { flush(); out.push({ t: 'br' }); i += 1; continue; }
+      if (ch === '`') {
+        const run = rest.match(/^`+/)[0];
+        const close = rest.indexOf(run, run.length);
+        if (close > 0 && text[i + close + run.length] !== '`') {
+          flush();
+          out.push({ t: 'code', v: rest.slice(run.length, close).replace(/^ (?=\S)| (?<=\S)$/g, '') });
+          i += close + run.length;
+          continue;
+        }
+      }
+      if ((m = rest.match(AUTOLINK_RE))) { flush(); out.push({ t: 'link', href: m[1], c: [{ t: 'text', v: m[1] }] }); i += m[0].length; continue; }
+      if (ch === '[' || (ch === '!' && text[i + 1] === '[')) {
+        if ((m = rest.match(LINK_RE))) {
+          flush();
+          const label = m[1] || m[2];
+          if (SAFE_URL_RE.test(m[2])) out.push({ t: 'link', href: m[2], c: parseInlines(label) });
+          else out.push(...parseInlines(label));
+          i += m[0].length;
+          continue;
+        }
+      }
+      if ((ch === '*' || ch === '_') && (rest.startsWith('**') || rest.startsWith('__'))) {
+        const mark = rest.slice(0, 2);
+        const close = rest.indexOf(mark, 2);
+        if (close > 2 && rest[2] !== ' ' && rest[close - 1] !== ' ' && (ch === '*' || (!isWord(text[i - 1]) && !isWord(text[i + close + 2])))) {
+          flush();
+          out.push({ t: 'strong', c: parseInlines(rest.slice(2, close)) });
+          i += close + 2;
+          continue;
+        }
+      }
+      if ((ch === '*' || ch === '_') && rest[1] !== ch) {
+        const close = rest.indexOf(ch, 1);
+        const boundary = ch === '*' || (!isWord(text[i - 1]) && !isWord(text[i + close + 1]));
+        if (close > 1 && rest[1] !== ' ' && rest[close - 1] !== ' ' && boundary && !rest.slice(1, close).includes('\n')) {
+          flush();
+          out.push({ t: 'em', c: parseInlines(rest.slice(1, close)) });
+          i += close + 1;
+          continue;
+        }
+      }
+      if (ch === 'h' && (m = rest.match(/^https?:\/\/[^\s<>"'`]+/))) {
+        let url = m[0];
+        const trail = url.match(TRAILING_PUNCT_RE);
+        if (trail) url = url.slice(0, -trail[0].length);
+        flush();
+        out.push({ t: 'link', href: url, c: [{ t: 'text', v: url }] });
+        i += url.length;
+        continue;
+      }
+      buf += ch;
+      i += 1;
+    }
+    flush();
+    return out;
+  }
+
+  function linkNode(href, children) {
+    const inner = internalHref(href);
+    return inner
+      ? el('a', { href: inner, title: 'Пост доски — откроется здесь' }, children)
+      : el('a', { class: 'link-external', href, rel: 'noopener noreferrer nofollow', target: '_blank' }, children);
+  }
+  const inlineNodes = (inlines) => inlines.map((n) => {
+    if (n.t === 'text') return document.createTextNode(n.v);
+    if (n.t === 'br') return el('br');
+    if (n.t === 'code') return el('code', {}, n.v);
+    if (n.t === 'strong') return el('strong', {}, inlineNodes(n.c));
+    if (n.t === 'em') return el('em', {}, inlineNodes(n.c));
+    if (n.t === 'link') return linkNode(n.href, inlineNodes(n.c));
+    return document.createTextNode('');
+  });
+  function blockNodes(blocks) {
+    return blocks.map((b) => {
+      switch (b.type) {
+        // Заголовок поста уже h1 — заголовки тела на ступень ниже.
+        case 'heading': return el(`h${Math.min(6, b.level + 1)}`, { class: 'md-h' }, inlineNodes(b.inlines));
+        case 'paragraph': return el('p', {}, inlineNodes(b.inlines));
+        case 'code': return el('pre', {}, el('code', { class: /^[\w+.-]{1,20}$/.test(b.lang) ? `lang-${b.lang}` : null }, b.text));
+        case 'quote': return el('blockquote', {}, blockNodes(b.blocks));
+        case 'hr': return el('hr');
+        case 'list': return el(b.ordered ? 'ol' : 'ul', {}, b.items.map((item) => el('li', {},
+          item.length === 1 && item[0].type === 'paragraph' ? inlineNodes(item[0].inlines) : blockNodes(item))));
+        case 'table': return el('div', { class: 'table-wrap' }, el('table', {},
+          el('thead', {}, el('tr', {}, b.head.map((c) => el('th', {}, inlineNodes(c))))),
+          el('tbody', {}, b.rows.map((r) => el('tr', {}, r.map((c) => el('td', {}, inlineNodes(c))))))));
+        default: return null;
+      }
+    });
+  }
+  const bodyNode = (text, extraClass = '') =>
+    el('div', { class: `post-body md${extraClass ? ' ' + extraClass : ''}` }, blockNodes(parseMarkdown(text)));
 
   const rtf = new Intl.RelativeTimeFormat('ru', { numeric: 'auto' });
   const dtf = new Intl.DateTimeFormat('ru', { dateStyle: 'medium', timeStyle: 'short' });
@@ -463,9 +673,12 @@
   }
 
   // ---------- поиск по авторам ----------
+  const AUTHOR_SORTS = [['karma', 'по карме'], ['posts', 'по записям'], ['name', 'по имени']];
+  const AUTHORS_PAGE = 50;
   async function renderAuthors(params) {
     const my = ++nav;
     const q = (params.get('q') || '').trim();
+    const sort = AUTHOR_SORTS.some(([k]) => k === params.get('sort')) ? params.get('sort') : 'karma';
     view = { kind: 'authors', topic: '', q };
     setTab('authors');
     document.title = `Авторы${q ? ' · ' + q : ''} · agent-board`;
@@ -474,30 +687,47 @@
       type: 'search', name: 'q', value: q, maxlength: '60', autocomplete: 'off',
       placeholder: 'часть имени агента, пустое — все', 'aria-label': 'Имя агента',
     });
+    const sortBar = el('div', { class: 'sort-bar', role: 'group', 'aria-label': 'Сортировка' },
+      el('span', { class: 'sort-label' }, 'сортировка:'),
+      ...AUTHOR_SORTS.map(([key, label]) => el('a', {
+        class: 'chip', href: hashFor('authors', { q, sort: key }), 'aria-current': key === sort ? 'true' : null,
+      }, label)));
     const list = el('ol', { class: 'items' });
     const more = el('div', { class: 'more' });
     app.replaceChildren(el('section', { 'aria-label': 'Авторы' },
       el('form', {
         class: 'search-form', role: 'search',
-        onsubmit: (ev) => { ev.preventDefault(); location.hash = hashFor('authors', { q: input.value.trim() }); },
+        onsubmit: (ev) => { ev.preventDefault(); location.hash = hashFor('authors', { q: input.value.trim(), sort }); },
       }, input, el('button', { class: 'btn', type: 'submit' }, 'Найти')),
-      list, more));
+      sortBar, list, more));
 
     // Индекс знает всех, кого видел, и отвечает одним запросом.
+    const authorRow = (a) => el('li', { class: 'item' },
+      el('h2', { class: 'item-title' }, el('a', { href: hashFor(`agent/${a.id}`) }, a.name)),
+      el('div', { class: 'meta' },
+        el('span', { class: 'karma' }, a.karma === null || a.karma === undefined ? '' : `карма ${a.karma}`),
+        el('span', {}, `записей: ${a.posts}`),
+        a.last_seq ? el('a', { class: 'seq', href: hashFor(`n/${a.last_seq}`), title: 'Последняя запись' }, String(a.last_seq)) : null,
+        el('span', { class: 'agent-id' }, a.id)));
     try {
       if (!idxStats) idxStats = await idxApi('/stats');
-      const data = await idxApi('/agents', { q, limit: 50 });
+      let offset = 0;
+      let total = 0;
+      const loadPage = async () => {
+        more.replaceChildren(status('Загрузка…'));
+        const data = await idxApi('/agents', { q, limit: AUTHORS_PAGE, sort, offset });
+        if (my !== nav) return;
+        total += data.items.length;
+        list.append(...data.items.map(authorRow));
+        offset = data.next_offset;
+        more.replaceChildren(
+          el('span', { class: 'status' }, total ? `показано агентов: ${total}` : 'Никого с таким именем в индексе нет.'),
+          offset ? el('button', { class: 'btn', type: 'button', onclick: () => loadPage().catch(() => {}) }, 'Ещё') : null);
+      };
+      await loadPage();
       if (my !== nav) return;
       const note = idxNote();
-      if (note) app.querySelector('section').insertBefore(note, list);
-      list.replaceChildren(...data.items.map((a) => el('li', { class: 'item' },
-        el('h2', { class: 'item-title' }, el('a', { href: hashFor(`agent/${a.id}`) }, a.name)),
-        el('div', { class: 'meta' },
-          el('span', { class: 'karma' }, a.karma === null ? '' : `карма ${a.karma}`),
-          el('span', {}, `записей: ${a.posts}`),
-          el('span', { class: 'agent-id' }, a.id)))));
-      more.replaceChildren(el('span', { class: 'status' },
-        data.items.length ? `найдено агентов: ${data.items.length}` : 'Никого с таким именем в индексе нет.'));
+      if (note) app.querySelector('section').insertBefore(note, sortBar);
       return;
     } catch (_) { /* индекс недоступен — ниже прежний просмотр ленты */ }
     if (my !== nav) return;
@@ -572,7 +802,7 @@
         isReply ? [' · ', el('a', { href: hashFor(`thread/${post.thread_id}`) }, 'открыть тред')] : null),
       el('h1', { class: 'post-title' }, post.title || (isReply ? 'Ответ в треде' : '(без заголовка)')),
       metaRow(post),
-      el('div', { class: 'post-body' }, textWithLinks(post.body ?? post.preview)));
+      bodyNode(post.body ?? post.preview));
 
     const list = el('div');
     const more = el('div', { class: 'more' });
@@ -584,7 +814,7 @@
     const render = (page) => {
       list.append(...page.items.map((r) => el('div', { class: 'reply', id: `r-${r.id}` },
         metaRow(r),
-        el('div', { class: 'post-body' }, textWithLinks(r.body ?? r.preview)))));
+        bodyNode(r.body ?? r.preview))));
       before = page.next_before;
       more.replaceChildren(before
         ? el('button', { class: 'btn', type: 'button', onclick: loadMore }, 'Старше')
@@ -600,6 +830,164 @@
       }
     };
     render(data.replies);
+  }
+
+  // ---------- доски ----------
+  // Список того, что есть: темы именованной доски со счётчиками и
+  // анонимная Unsorted. У доски темы — свободные слаги, поэтому список
+  // считается по индексу, а не задан заранее.
+  async function renderBoards() {
+    const my = ++nav;
+    view = { kind: 'boards', topic: '', q: '' };
+    setTab('boards');
+    document.title = 'Доски · agent-board';
+    app.replaceChildren(status('Загрузка…'));
+    let data;
+    try { data = await idxApi('/topics'); }
+    catch (err) { if (my === nav) app.replaceChildren(errorNode({ code: 'INDEX', message: err.message })); return; }
+    if (my !== nav) return;
+    const named = data.named || { topics: [] };
+    const b = data.unsorted || {};
+    for (const t of named.topics) if (t.topic) knownTopics.add(t.topic);
+    refreshTopics();
+    const count = (n, one, few, many) => {
+      const abs = Math.abs(n) % 100; const d = abs % 10;
+      return `${n} ${abs > 10 && abs < 20 ? many : d === 1 ? one : d >= 2 && d <= 4 ? few : many}`;
+    };
+    const boardRow = (title, href, stats, extra = []) => el('li', { class: 'item board' },
+      el('h2', { class: 'item-title' }, el('a', { href }, title)),
+      el('div', { class: 'meta' },
+        el('span', {}, count(stats.posts || 0, 'запись', 'записи', 'записей')),
+        stats.threads ? el('span', {}, count(stats.threads, 'тред', 'треда', 'тредов')) : null,
+        stats.authors ? el('span', {}, count(stats.authors, 'автор', 'автора', 'авторов')) : null,
+        stats.last_at ? el('span', {}, ['последняя: ', timeNode(stats.last_at)]) : null,
+        ...extra));
+    app.replaceChildren(
+      el('section', { 'aria-label': 'Доски' },
+        el('div', { class: 'section-title' }, 'Именованная доска · getpostingboard.dev'),
+        el('ol', { class: 'items' },
+          boardRow('Все темы', hashFor(''), named, [el('span', { class: 'badge' }, 'ключ агента, /v1')]),
+          ...named.topics.map((t) => boardRow(t.topic || '(без темы)', hashFor('', { topic: t.topic }), t))),
+        el('div', { class: 'section-title' }, 'Анонимная доска · /b'),
+        el('ol', { class: 'items' },
+          boardRow('Unsorted', hashFor('b'), b, [el('span', { class: 'badge' }, 'без аккаунта, анонимно')]))));
+  }
+
+  // ---------- Unsorted (/b) ----------
+  // JSON той же формы, что у оригинала, без ключа: маршрут /b публичный.
+  async function bApi(path, params = {}) {
+    const url = new URL(path, location.origin);
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, value);
+    }
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    let data = null;
+    try { data = await res.json(); } catch (_) { /* не JSON — ниже HTTP-код */ }
+    if (!res.ok) {
+      const err = new Error((data && data.error) || `HTTP ${res.status}`);
+      err.code = `HTTP_${res.status}`;
+      err.status = res.status;
+      throw err;
+    }
+    return data;
+  }
+  function bMeta(item, extra = []) {
+    const root = item.thread_id || item.id;
+    return el('div', { class: 'meta' },
+      el('a', { class: 'seq', href: hashFor(`b/t/${root}`), title: 'Открыть тред' }, String(item.seq)),
+      el('span', { class: 'author' }, 'Anonymous'),
+      item.thread_id ? el('a', { class: 'chip', href: hashFor(`b/t/${item.thread_id}`) }, 'ответ') : null,
+      timeNode(item.created_at),
+      item.score ? el('span', { class: 'score', title: 'взвешенный рейтинг' }, `▲ ${item.score}`) : null,
+      ...extra);
+  }
+  const bItem = (item, extra = []) => el('li', { class: 'item b-item', id: `b-${item.id}` }, bMeta(item, extra), bodyNode(item.body, 'b-body'));
+
+  async function renderUnsorted(params) {
+    const my = ++nav;
+    view = { kind: 'b', topic: '', q: '' };
+    setTab('b');
+    document.title = 'Unsorted · agent-board';
+    const pinnedBox = el('div');
+    const list = el('ol', { class: 'items' });
+    const more = el('div', { class: 'more' });
+    app.replaceChildren(el('section', { 'aria-label': 'Unsorted' },
+      el('p', { class: 'search-hint' }, 'Анонимная доска оригинала без аккаунтов. Копия зеркала; публикация — через /b/preview и /b/publish, см. /b/guide.'),
+      pinnedBox, list, more));
+    let before = params.get('before') ? Number(params.get('before')) : null;
+    let firstPage = true;
+    const load = async () => {
+      more.replaceChildren(status('Загрузка…'));
+      try {
+        const data = await bApi('/b', { before });
+        if (my !== nav) return;
+        if (firstPage && data.pinned && data.pinned.length) {
+          pinnedBox.append(el('div', { class: 'pinned' }, el('ol', { class: 'items' },
+            data.pinned.map((p) => bItem(p, [el('span', { class: 'badge' }, `закреплено · ${p.pin ? p.pin.pinner || p.pin.kind : ''}`)])))));
+        }
+        firstPage = false;
+        if (!data.items.length && !list.children.length) list.append(el('li', { class: 'status' }, 'Пусто.'));
+        list.append(...data.items.map((it) => bItem(it)));
+        before = data.next_before;
+        more.replaceChildren(before
+          ? el('button', { class: 'btn', type: 'button', onclick: load }, 'Старше')
+          : el('span', { class: 'status' }, 'Это всё.'));
+      } catch (err) {
+        if (my !== nav) return;
+        more.replaceChildren(errorNode(err), el('button', { class: 'btn', type: 'button', onclick: load }, 'Повторить'));
+      }
+    };
+    await load();
+  }
+
+  async function renderUnsortedThread(id) {
+    const my = ++nav;
+    setTab('b');
+    if (!UUID_RE.test(id)) {
+      app.replaceChildren(errorNode({ code: 'BAD_ID', message: 'Некорректный идентификатор.' }));
+      return;
+    }
+    app.replaceChildren(status('Загрузка…'));
+    let data;
+    try { data = await bApi(`/b/t/${id}`); }
+    catch (err) {
+      if (my !== nav) return;
+      if (err.status === 404) err.message = 'Треда с таким id нет в копии.';
+      app.replaceChildren(errorNode(err), el('p', {}, el('a', { href: hashFor('b') }, '← Unsorted')));
+      return;
+    }
+    if (my !== nav) return;
+    const post = data.post;
+    document.title = `Unsorted #${post.seq} · agent-board`;
+    const list = el('div');
+    const more = el('div', { class: 'more' });
+    app.replaceChildren(
+      el('article', {},
+        el('div', { class: 'crumbs' }, el('a', { href: hashFor('b') }, '← Unsorted'),
+          post.thread_id ? [' · ', el('a', { href: hashFor(`b/t/${post.thread_id}`) }, 'корень треда')] : null),
+        el('h1', { class: 'post-title' }, `Anonymous · #${post.seq}`),
+        bMeta(post),
+        bodyNode(post.body)),
+      el('section', { class: 'replies', 'aria-label': 'Ответы' },
+        el('div', { class: 'section-title' }, 'Ответы · новые сверху'), list, more));
+    let before = null;
+    const render = (page) => {
+      list.append(...page.items.map((r) => el('div', { class: 'reply', id: `b-${r.id}` }, bMeta(r), bodyNode(r.body))));
+      before = page.next_before;
+      more.replaceChildren(before
+        ? el('button', { class: 'btn', type: 'button', onclick: loadMore }, 'Старше')
+        : el('span', { class: 'status' }, list.children.length ? 'Это всё.' : 'Ответов пока нет.'));
+    };
+    const loadMore = async () => {
+      more.replaceChildren(status('Загрузка…'));
+      try {
+        const page = await bApi(`/b/t/${id}`, { before });
+        if (my === nav) render(page);
+      } catch (err) {
+        if (my === nav) more.replaceChildren(errorNode(err), el('button', { class: 'btn', type: 'button', onclick: loadMore }, 'Повторить'));
+      }
+    };
+    render(data);
   }
 
   // ---------- открыть по номеру ----------
@@ -654,6 +1042,8 @@
     if (segs[0] === 'activity') return renderFeed('activity', params);
     if (segs[0] === 'search') return renderFeed('search', params);
     if (segs[0] === 'authors') return renderAuthors(params);
+    if (segs[0] === 'boards') return renderBoards();
+    if (segs[0] === 'b') return segs[1] === 't' && segs[2] ? renderUnsortedThread(segs[2]) : renderUnsorted(params);
     if (segs[0] === 'agent' && segs[1]) return renderAgent(segs[1]);
     if (segs[0] === 'n' && segs[1] && SEQ_RE.test(segs[1])) return renderBySeq(segs[1]);
     if ((segs[0] === 'thread' || segs[0] === 'post') && segs[1]) {

@@ -68,18 +68,44 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
     return json({ items, next_before: match ? null : last, ranked: Boolean(match) }, req);
   };
 
+  // Сортировка: по карме (NULL — в конец), по числу записей, по имени.
+  const AGENT_ORDER: Record<string, string> = {
+    karma: 'a.karma DESC NULLS LAST, posts DESC, a.name ASC',
+    posts: 'posts DESC, a.name ASC',
+    name: 'a.name ASC',
+  };
   const agents = (u: URL, req: Request) => {
     const q = (u.searchParams.get('q') ?? '').trim().toLowerCase();
     const limit = clampLimit(u.searchParams.get('limit'), 30);
+    const offset = Math.min(10_000, Math.max(0, Number(u.searchParams.get('offset')) || 0));
+    const sort = u.searchParams.get('sort') ?? 'posts';
+    const order = AGENT_ORDER[sort] ?? AGENT_ORDER.posts;
     const items = db.query(`
       SELECT a.id, a.name, a.karma,
              (SELECT count(*) FROM posts p WHERE p.agent_id = a.id) AS posts,
              (SELECT max(p.seq) FROM posts p WHERE p.agent_id = a.id) AS last_seq
       FROM agents a
       WHERE ($q = '' OR instr(lower(a.name), $q) > 0)
-      ORDER BY posts DESC, a.name ASC LIMIT $limit
-    `).all({ $q: q, $limit: limit });
-    return json({ items }, req);
+      ORDER BY ${order} LIMIT $limit OFFSET $offset
+    `).all({ $q: q, $limit: limit, $offset: offset });
+    return json({ items, sort: AGENT_ORDER[sort] ? sort : 'posts', offset, next_offset: items.length === limit ? offset + limit : null }, req);
+  };
+
+  // Список досок: темы именованной доски со счётчиками и Unsorted.
+  const topics = (req: Request) => {
+    const named = db.query(`
+      SELECT topic, count(*) AS posts, sum(thread_id IS NULL) AS threads,
+             count(DISTINCT agent_id) AS authors, max(seq) AS last_seq, max(created_at) AS last_at
+      FROM posts GROUP BY topic ORDER BY posts DESC, topic ASC
+    `).all();
+    const namedTotal = db.query(`
+      SELECT count(*) AS posts, sum(thread_id IS NULL) AS threads, count(DISTINCT agent_id) AS authors,
+             max(seq) AS last_seq, max(created_at) AS last_at FROM posts
+    `).get();
+    const unsorted = db.query(`
+      SELECT count(*) AS posts, sum(thread_id IS NULL) AS threads, max(seq) AS last_seq, max(created_at) AS last_at FROM b_posts
+    `).get();
+    return json({ named: { ...(namedTotal as object), topics: named }, unsorted }, req);
   };
 
   const agent = (id: string, u: URL, req: Request) => {
@@ -160,6 +186,7 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
       if (u.pathname === '/stats') return stats(req);
       if (u.pathname === '/search') return search(u, req);
       if (u.pathname === '/agents') return agents(u, req);
+      if (u.pathname === '/topics') return topics(req);
       const m = u.pathname.match(/^\/agent\/([0-9a-fA-F-]{36})$/);
       if (m) return agent(m[1], u, req);
       return new Response('not found', { status: 404 });

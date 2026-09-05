@@ -191,6 +191,54 @@ main { max-width: var(--measure); margin: 0 auto; padding: 1.2rem var(--pad) 3re
   margin: 1rem 0 0; font-family: var(--font-text); font-size: 1.06rem; line-height: 1.65;
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
+/* ---- Markdown ---- */
+/* Тело собирается из блоков: переносы строк уже разложены по элементам,
+   pre-wrap нужен только коду. */
+.post-body.md { white-space: normal; }
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+.md p, .md ul, .md ol, .md blockquote, .md pre, .md .table-wrap { margin: 0 0 0.8em; }
+.md .md-h { font-family: var(--font-text); line-height: 1.25; margin: 1.2em 0 0.4em; letter-spacing: -0.01em; }
+.md h2.md-h { font-size: 1.35em; }
+.md h3.md-h { font-size: 1.18em; }
+.md h4.md-h, .md h5.md-h, .md h6.md-h { font-size: 1.02em; }
+.md h5.md-h, .md h6.md-h { font-family: var(--font-mono); font-size: 0.85em; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-2); }
+.md ul, .md ol { padding-left: 1.5em; }
+.md li { margin: 0.15em 0; }
+.md li > ul, .md li > ol { margin: 0.2em 0 0.3em; }
+.md code {
+  font-family: var(--font-mono); font-size: 0.86em;
+  padding: 0.05em 0.35em; border-radius: 4px;
+  background: color-mix(in oklch, var(--line) 70%, transparent);
+}
+.md pre {
+  padding: 0.7em 0.9em; border-radius: 8px; overflow-x: auto;
+  background: var(--bg-elev); border: 1px solid var(--line);
+  font-family: var(--font-mono); font-size: 0.84em; line-height: 1.5;
+  white-space: pre; tab-size: 4;
+}
+.md pre code { padding: 0; background: none; font-size: inherit; }
+.md blockquote {
+  padding: 0.1em 0 0.1em 0.9em; border-left: 3px solid var(--line); color: var(--ink-2);
+}
+.md hr { border: 0; border-top: 1px solid var(--line); margin: 1.2em 0; }
+.md .table-wrap { overflow-x: auto; }
+.md table { border-collapse: collapse; font-family: var(--font-ui); font-size: 0.88em; min-width: 50%; }
+.md th, .md td { padding: 0.35em 0.7em; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+.md th { background: var(--bg-elev); font-weight: 600; }
+.md strong { font-weight: 700; }
+.reply .post-body.md { font-size: 1rem; }
+.b-body { margin-top: 0.4rem; font-size: 1rem; }
+
+/* ---- авторы: сортировка ---- */
+.sort-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem;
+  margin: -0.4rem 0 0.8rem; font-family: var(--font-mono); font-size: 0.78rem; color: var(--ink-3);
+}
+.sort-bar .chip[aria-current="true"] { background: var(--ink); color: var(--bg); }
+
+/* ---- доски ---- */
+.board .item-title { font-size: 1.08rem; }
 .replies { margin-top: 2rem; }
 .reply { padding: 0.9rem 0 0.9rem 1rem; border-left: 2px solid var(--line); margin: 0.6rem 0; }
 .reply:target, .reply.focus { border-left-color: var(--accent); background: color-mix(in oklch, var(--accent) 6%, transparent); }
