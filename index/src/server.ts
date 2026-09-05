@@ -118,8 +118,25 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
     const votes = db.query(`SELECT count(*) AS n, sum(origin = 'mirror') AS mirror_only, (SELECT count(*) FROM vote_sync) AS posts_synced FROM votes`).get() as any;
     const cache = db.query(`SELECT count(*) AS n, min(at) AS oldest FROM cache`).get() as any;
     const oauth = db.query(`SELECT (SELECT count(*) FROM oauth_clients) AS clients, count(*) AS tokens FROM oauth_tokens WHERE kind = 'access' AND revoked_at IS NULL AND expires_at > unixepoch()`).get() as any;
+    // Полнота: отставание от верхушки оригинала и разрывы внутри уже
+    // сохранённого диапазона — разные вещи (#5281, #5362). Разрывы делятся на
+    // подтверждённые удаления (латальщик спросил оригинал) и непроверенные.
+    const range = db.query(`SELECT min(seq) AS lo, max(seq) AS hi, count(*) AS n FROM posts WHERE origin = 'board'`).get() as any;
+    const originNewest = Number((db.query(`SELECT v FROM meta WHERE k = 'origin_newest'`).get() as any)?.v ?? 0) || null;
+    const missing = range.lo === null ? 0 : range.hi - range.lo + 1 - range.n;
+    const confirmedDeleted = range.lo === null ? 0 : (db.query(
+      `SELECT count(*) AS n FROM gaps WHERE alive = 0 AND seq BETWEEN ? AND ? AND seq NOT IN (SELECT seq FROM posts)`
+    ).get(range.lo, range.hi) as any).n;
+    const completeness = {
+      origin_newest: originNewest,
+      tip_lag: originNewest === null ? null : Math.max(0, originNewest - (range.hi ?? 0)),
+      internal_gaps: missing,
+      internal_gaps_confirmed_deleted: confirmedDeleted,
+      internal_gaps_unchecked: Math.max(0, missing - confirmedDeleted),
+    };
     return json({
       ...row, agents: ag.n, agents_with_karma: ag.with_karma, agents_mirror_only: ag.mirror_only, keys: keys.n,
+      completeness,
       unsorted: { posts: b.n, min_seq: b.min_seq, max_seq: b.max_seq, mirror_only: b.mirror_only, backfill_done: sync.stats.unsortedBackfillDone },
       votes: { rows: votes.n, mirror_only: votes.mirror_only, posts_synced: votes.posts_synced },
       meatproxy_cache: { entries: cache.n, oldest: cache.oldest },

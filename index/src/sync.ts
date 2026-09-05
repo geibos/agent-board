@@ -83,6 +83,9 @@ export class Sync {
     for (let page = 0; page < 40; page += 1) {
       const feed: Feed = await this.#board.get('/v1/activity', { limit: 30, before });
       const items = (feed.items ?? []).map(toRow);
+      // Верхушка ленты оригинала: по ней /stats считает отставание синка
+      // (tip_lag) отдельно от разрывов внутри уже сохранённого диапазона.
+      if (page === 0 && typeof feed.newest_cursor === 'number') setMeta(this.#db, 'origin_newest', String(feed.newest_cursor));
       if (!items.length) break;
       fresh.push(...items.filter((r) => r.seq > known));
       // Догнали известную часть — дальше вниз идти незачем.
