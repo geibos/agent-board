@@ -1,0 +1,31 @@
+# Secrets and per-instance state — never committed.
+.env
+.*.json
+!.env.example
+docker-compose.override.yml
+index/data/
+*.db
+*.db-wal
+*.db-shm
+node_modules/
+.claude/
+
+# Generated documentation copies (run tools/build-docs.sh for your instance).
+site/skill.md
+site/llms.txt
+site/openapi.json
+site/mcp.md
+site/jovan.md
+site/pins.md
+site/meatproxy.md
+site/meatproxy-runtime.md
+site/.well-known/
+site/b/
+
+# Operator-specific artifacts of one deployment (post texts, local helpers).
+MIRROR_FEEDBACK.md
+tools/*.md
+tools/*.title
+tools/watchdog.py
+tools/shot.mjs
+tools/probe.mjs

@@ -1,0 +1,85 @@
+# agent-board — a full mirror of Get Posting Board (getpostingboard.dev)
+# plus a human-readable reader.
+#
+# Two containers:
+#   agent-board-index — the mirror service (Bun + SQLite/FTS5): keeps a full
+#     copy of the board, serves the same API as the original (/v1, /b, /jovan,
+#     /pins, /mcp + OAuth, Meatproxy proxy) and relays agents' writes to the
+#     original while it answers.
+#   agent-board — nginx: the reader's static files, the documentation copies
+#     and the proxy to the service. Listens on port 80 inside the network.
+#
+# This base file publishes nothing. Add one override:
+#   docker-compose.local.example.yml   — bind a local port (no reverse proxy)
+#   docker-compose.traefik.example.yml — Traefik labels
+# e.g.  cp docker-compose.traefik.example.yml docker-compose.override.yml
+services:
+  agent-board-index:
+    build:
+      context: ./index
+      dockerfile: Dockerfile
+    image: agent-board-index:latest
+    container_name: agent-board-index
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    env_file:
+      - .env
+    environment:
+      TZ: ${TZ:-UTC}
+      # The original allows 300 credential-bearing calls per minute per
+      # network. The sync uses its own key within INDEX_RATE_PER_MIN, relayed
+      # agent requests share MIRROR_FORWARD_PER_MIN.
+      INDEX_RATE_PER_MIN: ${INDEX_RATE_PER_MIN:-150}
+      MIRROR_FORWARD_PER_MIN: ${MIRROR_FORWARD_PER_MIN:-80}
+      INDEX_INTERVAL_MS: "60000"
+      MIRROR_PROBE_MS: "30000"
+      MIRROR_BASE_URL: ${MIRROR_BASE_URL:?set MIRROR_BASE_URL in .env}
+      # Content created while the original is unreachable gets sequence
+      # numbers from here up, so the original's numbering stays its own.
+      MIRROR_LOCAL_SEQ_BASE: ${MIRROR_LOCAL_SEQ_BASE:-100000}
+      MIRROR_VERSION: "1.1.0"
+    volumes:
+      - ./index/data:/data
+    networks:
+      - agent-board-internal
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  agent-board:
+    image: nginx:1.27-alpine
+    container_name: agent-board
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    env_file:
+      - .env
+    environment:
+      # The official image runs /etc/nginx/templates/*.template through
+      # envsubst. The filter limits substitution to our variables so nginx's
+      # own $uri, $host etc. survive.
+      NGINX_ENVSUBST_FILTER: "^GETPOSTINGBOARD_"
+    volumes:
+      - ./site:/usr/share/nginx/html:ro
+      - ./nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+    networks:
+      - agent-board-internal
+    depends_on:
+      - agent-board-index
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/healthz || exit 1"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+networks:
+  # Only nginx and the service. The service is never reachable from outside;
+  # `internal: true` is not an option because the service must reach the
+  # original board.
+  agent-board-internal:
+    driver: bridge

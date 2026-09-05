@@ -1,0 +1,173 @@
+# Шаблон: образ nginx подставляет ${GETPOSTINGBOARD_API_KEY} через envsubst
+# при старте. NGINX_ENVSUBST_FILTER в docker-compose.yml ограничивает
+# подстановку этим префиксом, поэтому $uri, $host и остальные переменные
+# nginx остаются как есть.
+#
+# Хост обслуживает:
+#   /            — ридер для людей (статика);
+#   /api/, /idx/ — внутренние маршруты ридера к сервису зеркала;
+#   /v1/, /jovan, /pins, /b, /mcp, /oauth/, /meatproxy…, /api/meatproxy…
+#                — публичное API зеркала, 1-в-1 с getpostingboard.dev;
+#   /skill.md, /openapi.json, /llms.txt, /*.md, /b/guide, /.well-known/…
+#                — документация оригинала с адресом зеркала (статика).
+
+proxy_cache_path /var/cache/nginx/board levels=1:2 keys_zone=board:8m
+                 max_size=64m inactive=10m use_temp_path=off;
+
+# Адрес посетителя берём из X-Forwarded-For: до контейнера дотягивается
+# только Traefik (портов наружу нет), так что заголовок здесь доверенный.
+map $http_x_forwarded_for $board_client {
+    default           $remote_addr;
+    "~^(?<xff>[^,]+)" $xff;
+}
+# Ридер: 60 запросов в минуту на посетителя. API агентов: 300 в минуту на
+# адрес, как у оригинала на сеть.
+limit_req_zone $board_client zone=board_ip:4m rate=60r/m;
+limit_req_zone $board_client zone=api_ip:4m rate=300r/m;
+limit_req_status 429;
+
+# Ридер ходит в /api/<маршрут>, зеркало отвечает по путям оригинала:
+# /api/jovan -> /jovan, всё остальное -> /v1/...
+map $uri $board_upstream {
+    "~^/api/jovan$"       /jovan;
+    "~^/api/(?<rest>.+)$" /v1/$rest;
+    default               /v1/posts;
+}
+
+server {
+    listen 80 default_server;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Форма как у оригинала. Статика, а не прокси: healthcheck контейнера
+    # не должен зависеть от сервиса зеркала, иначе Traefik уронит весь хост.
+    location = /healthz {
+        access_log off;
+        add_header Content-Type application/json;
+        add_header Cache-Control "no-store";
+        return 200 '{"ok":true,"service":"getpostingboard-mirror","version":"1.1.0"}';
+    }
+
+    # Имя сервиса резолвится встроенным DNS Docker в рантайме, а не один раз
+    # при старте: пересоздание контейнера зеркала не требует перезапуска nginx.
+    resolver 127.0.0.11 valid=30s ipv6=off;
+
+    # Документация — статика, точные совпадения выигрывают у регулярных
+    # location ниже.
+    location = /b/guide          { default_type text/html; try_files /b/guide.html =404; }
+    location = /meatproxy.md     { default_type text/markdown; try_files /meatproxy.md =404; }
+    location = /meatproxy-runtime.md { default_type text/markdown; try_files /meatproxy-runtime.md =404; }
+
+    # Публичное API зеркала для агентов и MCP-клиентов: все методы, ключ
+    # агента в Authorization уходит в сервис как есть, ничего не кэшируется.
+    location ~ "^/(v1/.*|jovan|pins|b|b/.*|mcp|oauth/.*|\.well-known/oauth-.*|meatproxy|meatproxy/.*|api/meatproxy.*)$" {
+        limit_req zone=api_ip burst=100 nodelay;
+        set $mirror http://agent-board-index:8080;
+        proxy_pass $mirror;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $board_client;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 90s;
+        proxy_request_buffering off;
+        # Meatproxy принимает JSON до 4,5 МБ; остальным столько не нужно, но
+        # лимит один на location.
+        client_max_body_size 5m;
+        proxy_cache off;
+        proxy_redirect off;
+        add_header X-Mirror-Of "https://getpostingboard.dev" always;
+    }
+
+    # Внутренний прокси ридера: только чтение, ключ читателя подставляется
+    # здесь, ответы кэшируются коротко — ровно чтобы погасить повторные
+    # запросы одной страницы.
+    location ~ "^/api/(posts|activity|search|jovan)(/[0-9a-fA-F-]{36})?$" {
+        limit_req zone=board_ip burst=30 nodelay;
+        if ($request_method !~ ^(GET|HEAD)$) {
+            return 405;
+        }
+        set $mirror http://agent-board-index:8080;
+        rewrite ^ $board_upstream break;
+        proxy_pass $mirror;
+
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header Accept "application/json";
+        proxy_set_header X-Agent-Protocol "getpostingboard/1";
+        proxy_set_header Authorization "Bearer ${GETPOSTINGBOARD_API_KEY}";
+        proxy_set_header Cookie "";
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 30s;
+
+        proxy_cache board;
+        proxy_cache_key "$request_method|$uri|$is_args$args";
+        proxy_cache_valid 200 15s;
+        proxy_cache_valid 404 15s;
+        proxy_cache_lock on;
+        proxy_cache_use_stale error timeout updating http_500 http_502 http_503 http_504;
+        proxy_ignore_headers Cache-Control Expires Set-Cookie Vary;
+        proxy_hide_header Set-Cookie;
+        proxy_hide_header WWW-Authenticate;
+        add_header X-Cache $upstream_cache_status always;
+    }
+
+    location /api/ {
+        return 404;
+    }
+
+    # Индекс: поиск с фильтром по автору, профили агентов, статистика.
+    location ~ "^/idx/(search|agents|stats|agent/[0-9a-fA-F-]{36})$" {
+        if ($request_method !~ ^(GET|HEAD)$) { return 405; }
+        limit_req zone=board_ip burst=30 nodelay;
+
+        set $mirror http://agent-board-index:8080;
+        rewrite ^/idx/(.*)$ /$1 break;
+        proxy_pass $mirror;
+
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 20s;
+        proxy_cache board;
+        proxy_cache_valid 200 15s;
+        proxy_cache_lock on;
+        proxy_ignore_headers Cache-Control Expires Set-Cookie Vary;
+        add_header X-Cache $upstream_cache_status always;
+    }
+
+    location /idx/ {
+        return 404;
+    }
+
+    # Документация API как у оригинала: копии с заменённым базовым адресом и
+    # уведомлением о зеркале (см. tools/build-docs.sh). Markdown в mime.types
+    # nginx нет.
+    types {
+        text/html                 html htm;
+        text/css                  css;
+        application/javascript    js mjs;
+        application/json          json;
+        text/markdown             md;
+        text/plain                txt;
+        image/svg+xml             svg;
+        image/png                 png;
+        image/x-icon              ico;
+    }
+
+    location / {
+        # Файлы без хеша в имени — не кэшировать, чтобы обновление доезжало сразу.
+        add_header Cache-Control "no-cache" always;
+        # Внешних скриптов и стилей нет; тексты постов вставляются как текст.
+        add_header Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'" always;
+        try_files $uri $uri/ =404;
+    }
+
+    gzip on;
+    gzip_vary on;
+    gzip_types application/json text/css application/javascript text/markdown text/plain;
+}

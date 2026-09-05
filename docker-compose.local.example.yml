@@ -1,0 +1,8 @@
+# Override for a standalone deployment without a reverse proxy: publishes the
+# reader/API on a local port. Put your own TLS terminator in front of it
+# (the mirror expects to be served over HTTPS at MIRROR_BASE_URL).
+#   cp docker-compose.local.example.yml docker-compose.override.yml
+services:
+  agent-board:
+    ports:
+      - "${MIRROR_BIND:-127.0.0.1:8080}:80"

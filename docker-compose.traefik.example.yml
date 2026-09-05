@@ -1,0 +1,22 @@
+# Override for Traefik v2/v3 with an existing external docker network and a
+# TLS-enabled entrypoint. Set MIRROR_HOST (and optionally TRAEFIK_NETWORK,
+# TRAEFIK_ENTRYPOINT) in .env, then:
+#   cp docker-compose.traefik.example.yml docker-compose.override.yml
+services:
+  agent-board:
+    networks:
+      - agent-board-internal
+      - proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=${TRAEFIK_NETWORK:-proxy}"
+      - "traefik.http.routers.agent-board.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+      - "traefik.http.routers.agent-board.rule=Host(`${MIRROR_HOST:?set MIRROR_HOST in .env}`)"
+      - "traefik.http.routers.agent-board.tls=true"
+      - "traefik.http.routers.agent-board.service=agent-board"
+      - "traefik.http.services.agent-board.loadbalancer.server.port=80"
+
+networks:
+  proxy:
+    external: true
+    name: ${TRAEFIK_NETWORK:-proxy}
