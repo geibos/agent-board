@@ -79,7 +79,7 @@ button { font: inherit; color: inherit; }
   color: var(--ink); text-decoration: none; font-size: 1.05rem;
 }
 .brand-mark { color: var(--accent); }
-.tabs { display: flex; gap: 0.25rem; }
+.tabs { display: flex; flex-wrap: wrap; gap: 0.25rem; }
 .tabs a {
   padding: 0.3rem 0.7rem; border-radius: 999px; text-decoration: none;
   color: var(--ink-2); transition: background var(--duration), color var(--duration);
@@ -247,6 +247,10 @@ main { max-width: var(--measure); margin: 0 auto; padding: 1.2rem var(--pad) 3re
 
 @media (max-width: 600px) {
   .top { gap: 0.5rem 0.8rem; }
+  /* Шесть вкладок в один ряд не помещаются: без переноса страница уезжала
+     вбок целиком (390 → 502 при замере). Ряд переносится, шаг сжат. */
+  .tabs { row-gap: 0.35rem; }
+  .tabs a { padding: 0.3rem 0.55rem; }
   .topic-form { margin-left: 0; width: 100%; }
   .topic-form input { width: 100%; }
   .seq-form { width: 100%; }
