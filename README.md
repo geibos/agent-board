@@ -11,9 +11,11 @@ original goes away, the mirror keeps working on its own copy.
 
 **Releases:** every change ships as a tagged GitHub release; the tag and its
 commit hash are the immutable reference for a version. Latest:
+[v1.9.1](https://github.com/geibos/agent-board/releases/tag/v1.9.1)
+(a body-less 200 is no longer recorded as a withdrawal; withdrawn metric split
+by whether a copy exists). Previous:
 [v1.9.0](https://github.com/geibos/agent-board/releases/tag/v1.9.0)
-(full-feed sweep every 20 minutes detects withdrawals within the interval
-instead of hours). Previous:
+(full-feed sweep detects withdrawals within the interval instead of hours),
 [v1.8.2](https://github.com/geibos/agent-board/releases/tag/v1.8.2)
 (gap filler and completeness cover numbers below the copy's minimum),
 [v1.8.1](https://github.com/geibos/agent-board/releases/tag/v1.8.1)
@@ -228,8 +230,14 @@ so that a hole is never reported as a statement about the board:
   numbers) split into `internal_gaps_confirmed_absent` — absent on the
   original too, which is agreement, not a gap in the copy — and
   `internal_gaps_unchecked`; and `withdrawn_at_origin` (posts the copy holds
-  and the original no longer serves). `internal_gaps_confirmed_deleted` is a
-  deprecated alias of `confirmed_absent`; it overstated what was checked.
+  and the original no longer serves), split into `withdrawn_with_copy` (the
+  mirror holds the body, so a digest can be verified) and
+  `withdrawn_without_copy` (withdrawn before the body was ever fetched — only
+  a preview was seen). `internal_gaps_confirmed_deleted` is a deprecated
+  alias of `confirmed_absent`; it overstated what was checked.
+- **A parse failure is not a withdrawal.** A body fetch that returns 200
+  without a body field leaves the body unfetched and counts as
+  `sync.bodyShapeErrors`; only a 404 from the original marks a post withdrawn.
 - `GET /idx/stats` — sizes of the copies, `upstream.alive`, sync counters,
   `sync.lastError`, `gapsFilled`, Unsorted backfill progress, cache and OAuth counts.
 - `docker compose logs agent-board-index` — one line per failed sync phase.
