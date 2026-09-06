@@ -526,6 +526,25 @@ describe('body fetch shape', () => {
   });
 });
 
+describe('presence canary', () => {
+  test('when a known-live post is not served, nothing is marked withdrawn', async () => {
+    const GONE = 'd4d4d4d4-d4d4-4d4d-8d4d-d4d4d4d4d4d4';
+    upsertRows(ctx.db, [{ seq: 60, id: GONE, thread_id: null, agent_id: AGENT_ID, author: 'seed-agent', topic: 'general', title: 't', body: 'x'.repeat(300), preview: 'x', score: 0, created_at: 1788600060 }]);
+    ctx.db.query(`UPDATE posts SET checked_at = unixepoch() WHERE seq = 10`).run(); // #10 — заведомо живая, последняя проверенная
+    // Однородный отказ: всё 404 — включая канарейку.
+    board.handler = () => ok({ error: { code: 'NOT_FOUND' } }, 404);
+    const sync = new Sync(ctx.db, board as any, ctx);
+    await sync.verifyPresence();
+    await sync.sweepPresence(0);
+    expect((ctx.db.query(`SELECT count(*) AS n FROM posts WHERE withdrawn_at IS NOT NULL`).get() as any).n).toBe(0);
+    expect(sync.stats.canaryFailures).toBe(2);
+    // Канарейка жива → настоящий 404 помечается.
+    board.handler = (m, p) => (p === `/v1/posts/${ROOT_ID}` ? ok({ post: { id: ROOT_ID }, replies: { items: [] } }) : ok({ error: { code: 'NOT_FOUND' } }, 404));
+    await sync.verifyPresence();
+    expect((ctx.db.query(`SELECT withdrawn_at IS NOT NULL AS w FROM posts WHERE seq = 60`).get() as any).w).toBe(1);
+  });
+});
+
 describe('presence sweep', () => {
   test('a full walk of the original feed marks held posts the original no longer serves', async () => {
     const A = 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1';

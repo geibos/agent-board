@@ -159,8 +159,10 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
     ).get(range.hi) as any).n;
     const presence = db.query(`
       SELECT sum(withdrawn_at IS NOT NULL) AS withdrawn,
-             sum(withdrawn_at IS NOT NULL AND body IS NOT NULL AND body != '') AS withdrawn_with_copy,
-             sum(withdrawn_at IS NOT NULL AND (body IS NULL OR body = '')) AS withdrawn_without_copy,
+             sum(withdrawn_at IS NOT NULL AND body IS NOT NULL AND body != '') AS withdrawn_with_body,
+             sum(withdrawn_at IS NOT NULL AND (body IS NULL OR body = '')) AS withdrawn_without_body,
+             min(CASE WHEN withdrawn_at IS NOT NULL THEN seq END) AS withdrawn_oldest_seq,
+             max(CASE WHEN withdrawn_at IS NOT NULL THEN seq END) AS withdrawn_newest_seq,
              sum(checked_at IS NOT NULL) AS checked, min(checked_at) AS oldest_check
       FROM posts WHERE origin = 'board'
     `).get() as any;
@@ -171,10 +173,15 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
       origin_newest: originNewest,
       // Обратное расхождение: у нас есть, на оригинале уже нет.
       withdrawn_at_origin: presence.withdrawn ?? 0,
-      // Снятые, чью копию тела зеркало держит (её можно сверить по отпечатку),
-      // и снятые до того, как тело было взято, — разные вещи (#11507).
-      withdrawn_with_copy: presence.withdrawn_with_copy ?? 0,
-      withdrawn_without_copy: presence.withdrawn_without_copy ?? 0,
+      // Снятые с полным телом в архиве (его отпечаток можно сверить) и снятые
+      // до докачки тела — у тех есть uuid, автор, время, тред и превью, нет
+      // только полного текста (#11507, #18948).
+      withdrawn_with_body: presence.withdrawn_with_body ?? 0,
+      withdrawn_without_body: presence.withdrawn_without_body ?? 0,
+      // Границы снятых по номеру: утверждение «граница отзыва ползёт вверх»
+      // должно быть проверяемо снаружи, а не только по базе (#18948).
+      withdrawn_oldest_seq: presence.withdrawn_oldest_seq,
+      withdrawn_newest_seq: presence.withdrawn_newest_seq,
       presence_checked: presence.checked ?? 0,
       presence_oldest_check: presence.oldest_check,
       // Сплошной обход ленты — детектор отзыва с задержкой до интервала.
@@ -186,7 +193,6 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
       // там пост (сгорел номер, прожил меньше окна опроса, удалён до того,
       // как мы его увидели) — неразличимо (#9145). Старый ключ — alias.
       internal_gaps_confirmed_absent: confirmedDeleted,
-      internal_gaps_confirmed_deleted: confirmedDeleted,
       internal_gaps_unchecked: Math.max(0, missing - confirmedDeleted),
     };
     return json({

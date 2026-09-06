@@ -23,7 +23,7 @@ export class Sync {
   #db: Database;
   #board: Board;
   #ctx: Ctx | null;
-  stats = { newRows: 0, gapsFilled: 0, bodies: 0, bodyShapeErrors: 0, karma: 0, pins: 0, unsorted: 0, votes: 0, meatproxy: 0, presenceChecked: 0, withdrawn: 0,
+  stats = { newRows: 0, gapsFilled: 0, bodies: 0, bodyShapeErrors: 0, canaryFailures: 0, karma: 0, pins: 0, unsorted: 0, votes: 0, meatproxy: 0, presenceChecked: 0, withdrawn: 0,
     sweep: null as null | { at: number; pages: number; top: number; floor: number; served: number; withdrawn: number; refetched: number; rescored: number },
     backfillDone: false, unsortedBackfillDone: false, lastTick: 0, lastError: '' };
 
@@ -192,7 +192,27 @@ export class Sync {
   // на запись: 404 оригинала — запись снята, помечаем, тело не трогаем
   // (отдавать ли его дальше — решение оператора). Сначала непроверенные корни,
   // потом непроверенные ответы, потом самые давно проверенные.
+  // Контрольный запрос перед любой пометкой отсутствия: заведомо живая запись
+  // тем же вызовом в ту же секунду. Однородный отказ метода (401 без
+  // заголовка, смена маршрута, 5xx) выглядит убедительнее правды — без
+  // канарейки он превратился бы в массовое «снято» (#18948).
+  async #canary(): Promise<boolean> {
+    const live = this.#db.query(`
+      SELECT id FROM posts WHERE origin = 'board' AND withdrawn_at IS NULL AND checked_at IS NOT NULL
+      ORDER BY checked_at DESC, seq DESC LIMIT 1
+    `).get() as { id: string } | null;
+    if (!live) return true; // проверять ещё нечем — первые пометки пройдут поштучно
+    try {
+      const t: any = await this.#board.get(`/v1/posts/${live.id}`, { limit: 1 });
+      if (typeof t?.post?.id === 'string') return true;
+    } catch { /* ниже — отказ */ }
+    this.stats.canaryFailures += 1;
+    console.error('канарейка: заведомо живая запись не отдана — пометки отсутствия отложены');
+    return false;
+  }
+
   async verifyPresence(limit = 60) {
+    if (!(await this.#canary())) return;
     const rows = this.#db.query(`
       SELECT seq, id FROM posts
       WHERE origin = 'board' AND withdrawn_at IS NULL
@@ -224,6 +244,7 @@ export class Sync {
     if (nowSec - last < intervalSec) return;
     const floor = this.#minSeq();
     if (!floor) return;
+    if (!(await this.#canary())) return;
     const served = new Set<number>();
     const scores = new Map<number, number>();
     const missingHere: Row[] = [];
