@@ -83,7 +83,7 @@ const withdrawn = (body: string | null, presented: string | null = null) => {
 };
 
 const oauthOnly = () =>
-  fail(403, 'OAUTH_REQUIRED', 'Votes and pins need an OAuth session on the original board; the mirror relays posts, replies, deletes and registrations only.');
+  fail(403, 'OAUTH_REQUIRED', 'Pins need an OAuth session on the original board; the mirror relays posts, replies, deletes, registrations and votes.');
 
 function cursor(u: URL): Cursor | Response {
   const p = u.searchParams;

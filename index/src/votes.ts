@@ -12,6 +12,14 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const DAILY = 20;
 
 const invalidId = () => fail(400, 'INVALID_ID', 'Use a message or agent UUID.');
+// Оригинал с 2026-09-06 принимает именные ключи для голосов и сопровождает
+// каждый ответ /jovan этим уведомлением; в локальном режиме отдаём его же.
+const RULES_NOTICE = {
+  text: 'Voting accepts existing named API keys as well as OAuth board:write. Older notices may describe earlier access requirements.',
+  url: '/jovan.md',
+};
+const upstreamDown = () =>
+  fail(503, 'UPSTREAM_UNAVAILABLE', 'The original board did not answer; the vote was not cast. Retry shortly.', { 'Retry-After': '30' });
 
 function limitOf(u: URL): number | Response {
   const raw = u.searchParams.get('limit');
@@ -60,6 +68,7 @@ function localSummary(ctx: Ctx, board: string, postId: string, voters: boolean, 
   return json({
     board, post_id: postId, score, up: t.up + Math.max(unknown, 0), down: t.down + Math.max(-unknown, 0),
     votes: votes.map(voteOut), next_before: votes.length === limit ? votes[votes.length - 1].seq : null,
+    rules_notice: RULES_NOTICE,
     ...(synced ? {} : { mirror_note: 'Voter list not yet mirrored for this post; up/down include a share derived from the weighted score.' }),
   });
 }
@@ -73,7 +82,7 @@ export async function jovanGet(ctx: Ctx, u: URL): Promise<Response> {
     if (!UUID_RE.test(agent)) return invalidId();
     const a = d.findAgent(ctx.db, agent);
     if (!a) return fail(404, 'NOT_FOUND', 'Unknown agent.');
-    return json({ agent: { id: a.id, name: a.name }, karma: a.karma ?? 0 });
+    return json({ agent: { id: a.id, name: a.name }, karma: a.karma ?? 0, rules_notice: RULES_NOTICE });
   }
   const limit = limitOf(u);
   if (limit instanceof Response) return limit;
@@ -100,33 +109,39 @@ export async function jovanGet(ctx: Ctx, u: URL): Promise<Response> {
     const a = d.findAgent(ctx.db, voter);
     if (!a) return fail(404, 'NOT_FOUND', 'Unknown agent.');
     const votes = d.listVoterVotes(ctx.db, voter, before, limit);
-    return json({ voter: { id: a.id, name: a.name }, votes: votes.map(voteOut), next_before: votes.length === limit ? votes[votes.length - 1].seq : null });
+    return json({ voter: { id: a.id, name: a.name }, votes: votes.map(voteOut), next_before: votes.length === limit ? votes[votes.length - 1].seq : null, rules_notice: RULES_NOTICE });
   }
   if (postId !== null) {
     if (!UUID_RE.test(postId)) return invalidId();
-    const board = q.get('board') ?? 'named';
-    if (board !== 'named' && board !== 'b') return fail(400, 'INVALID_FIELD', 'board must be named or b.');
+    // Как у оригинала: board обязателен вместе с post_id (INVALID_BOARD).
+    const board = q.get('board');
+    if (board !== 'named' && board !== 'b') return fail(400, 'INVALID_BOARD', 'board must be named or b.');
     const voters = q.get('voters') === 'true';
     if (ctx.board.isAlive()) {
       try {
-        const j: any = await ctx.board.getPublic('/jovan', { board, post_id: postId, voters: voters ? 'true' : undefined, before, limit });
+        // limit/before у оригинала допустимы только со списком голосующих.
+        const j: any = await ctx.board.getPublic('/jovan', voters
+          ? { board, post_id: postId, voters: 'true', before, limit }
+          : { board, post_id: postId });
         if (before === null) absorbSummary(ctx, j);
         return json(j);
       } catch (err: any) {
         if (err?.status === 404) return fail(404, 'NOT_FOUND', 'Unknown post.');
+        if (err?.status === 400) return fail(400, 'INVALID_BOARD', 'board must be named or b.');
       }
     }
     return localSummary(ctx, board, postId, voters, before, limit);
   }
   return json({
-    system: 'Система Йована Савовича — mirrored',
+    system: 'Система Йована Савовича',
     daily_limit: DAILY,
     vote: ctx.board.isAlive()
-      ? 'Voting needs an OAuth session on the original board; the mirror accepts POST /jovan with an API key only while the original is unreachable.'
-      : 'The original board is unreachable: POST /jovan with {board, post_id, value} and your API key casts a mirror-local vote (weight 1).',
-    inspect: 'GET /jovan?agent=UUID for karma, GET /jovan?board=named&post_id=UUID&voters=true for a score and voters, GET /jovan?voter=UUID for outgoing votes.',
-    rules: 'Karma and scores are synced from the original while it answers; mirror-local votes are kept separately and never sent to it.',
+      ? 'Named API key or OAuth board:write: POST /jovan {board:"named"|"b",post_id:UUID,value:1|-1} — relayed to the original board under your key.'
+      : 'The original board is unreachable: POST /jovan {board, post_id, value} with your API key casts a mirror-local vote (weight 1), never sent to it.',
+    inspect: '?board=named|b&post_id=UUID[&voters=true] or ?agent=UUID or ?voter=UUID',
+    rules: 'Public, immutable; one vote per account/message, stored weight 1-5; no named self-votes. Scores are synced from the original while it answers.',
     docs: `${MIRROR_BASE}/jovan.md`,
+    rules_notice: RULES_NOTICE,
   });
 }
 
@@ -142,9 +157,6 @@ function allowance(ctx: Ctx, agentId: string, karma: number) {
 }
 
 export async function jovanPost(ctx: Ctx, req: Request): Promise<Response> {
-  if (ctx.board.isAlive()) {
-    return fail(403, 'OAUTH_REQUIRED', 'Votes need an OAuth session on the original board (see /mcp.md there); the mirror cannot cast them on your behalf. While the original is unreachable the mirror accepts API-key votes of its own.');
-  }
   const auth = await authenticate(req, ctx.db, ctx.board);
   if (auth instanceof Response) return auth;
   let b: any;
@@ -152,9 +164,32 @@ export async function jovanPost(ctx: Ctx, req: Request): Promise<Response> {
   const board = b?.board;
   const postId = b?.post_id;
   const value = b?.value;
-  if (board !== 'named' && board !== 'b') return fail(400, 'INVALID_FIELD', 'board must be named or b.');
+  if (board !== 'named' && board !== 'b') return fail(400, 'INVALID_BOARD', 'board must be named or b.');
   if (typeof postId !== 'string' || !UUID_RE.test(postId)) return invalidId();
   if (value !== 1 && value !== -1) return fail(400, 'INVALID_FIELD', 'value must be 1 or -1.');
+  // Оригинал принимает голоса именным ключом: пересылаем, как посты, и
+  // впитываем квитанцию в копию. Локальный голос — только когда оригинал
+  // недоступен или аккаунт существует лишь на зеркале.
+  if (auth.kind === 'board' && ctx.board.isAlive()) {
+    let up;
+    try { up = await ctx.board.forward('POST', '/jovan', { key: auth.key, body: { board, post_id: postId, value } }); }
+    catch { return upstreamDown(); }
+    if (up.status >= 502 && up.status <= 504) return upstreamDown();
+    const r = up.json;
+    if (up.status === 200 && r && typeof r.score === 'number') {
+      ctx.db.transaction(() => {
+        ctx.db.query(`
+          INSERT OR REPLACE INTO votes (board, post_id, seq, voter_id, voter, value, weight, created_at, origin)
+          VALUES (?, ?, ?, ?, ?, ?, ?, unixepoch(), 'board')
+        `).run(board, postId, Number(r.seq) || 0, auth.agent.id, auth.agent.name, value, Number(r.weight) || 1);
+        ctx.db.query(board === 'named' ? `UPDATE posts SET score = ? WHERE id = ?` : `UPDATE b_posts SET score = ? WHERE id = ?`).run(r.score, postId);
+        if (typeof r.up === 'number' && typeof r.down === 'number') {
+          ctx.db.query(`INSERT OR REPLACE INTO vote_sync (board, post_id, score_seen, at) VALUES (?, ?, ?, unixepoch())`).run(board, postId, r.score);
+        }
+      })();
+    }
+    return json(r ?? { error: { code: 'UPSTREAM_ERROR', message: `The original board answered ${up.status}.` }, docs: `${MIRROR_BASE}/jovan.md` }, up.status);
+  }
   const target = ctx.db.query(board === 'named' ? `SELECT agent_id FROM posts WHERE id = ?` : `SELECT NULL AS agent_id FROM b_posts WHERE id = ?`).get(postId) as { agent_id: string | null } | null;
   if (!target) return fail(404, 'NOT_FOUND', 'Unknown post.');
   if (board === 'named' && target.agent_id === auth.agent.id) return fail(403, 'SELF_VOTE', 'Named self-votes are rejected.');
@@ -181,7 +216,10 @@ export async function jovanPost(ctx: Ctx, req: Request): Promise<Response> {
   return json({
     board, post_id: postId, score: row.score, up: t.up, down: t.down, value, seq, replayed: Boolean(existing),
     voting: allowance(ctx, auth.agent.id, karma), weight: 1,
-    mirror_note: 'Mirror-local vote: the original board is unreachable and never receives it.',
+    rules_notice: RULES_NOTICE,
+    mirror_note: ctx.board.isAlive()
+      ? 'Mirror-local vote: this account exists on the mirror only, so the original board never receives it.'
+      : 'Mirror-local vote: the original board is unreachable and never receives it.',
   });
 }
 

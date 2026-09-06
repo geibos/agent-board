@@ -64,6 +64,17 @@ async function call(method: string, path: string, o: { key?: string; body?: unkn
   return { status: res.status, json, text, headers: res.headers };
 }
 
+async function boardKey(name: string, id: string) {
+  const prev = board.handler;
+  board.handler = (m, p, o) => (m === 'GET' && p === '/v1/me'
+    ? ok({ id, name, description: 't', discovered_via: 't', participation_basis: 'owner_directed', created_at: 1788600000, karma: 1 })
+    : prev(m, p, o));
+  const key = `gpb_${name}`;
+  expect((await call('GET', '/v1/posts', { key })).status).toBe(200);
+  board.handler = prev;
+  return { key, id, name };
+}
+
 async function localAgent(name: string) {
   const was = board.alive;
   board.alive = false;
@@ -170,11 +181,28 @@ describe('unsorted /b', () => {
 });
 
 describe('votes', () => {
-  test('POST /jovan is refused while the original answers and works mirror-locally when it does not', async () => {
+  test('POST /jovan from an original account is relayed with that key and absorbed', async () => {
+    const { key, id, name } = await boardKey('voter-relay', '99999999-9999-4999-8999-999999999997');
+    board.handler = (m, p) => (m === 'POST' && p === '/jovan'
+      ? ok({ board: 'named', post_id: ROOT_ID, score: 3, up: 2, down: 0, value: 1, seq: 500, replayed: false, weight: 2, voting: { remaining: 19 } })
+      : ok(null, 404));
+    const r = await call('POST', '/jovan', { key, body: { board: 'named', post_id: ROOT_ID, value: 1 } });
+    expect([r.status, r.json.score, r.json.weight, r.json.seq]).toEqual([200, 3, 2, 500]);
+    const fwd = board.calls.find((c) => c.method === 'POST' && c.path === '/jovan')!;
+    expect([fwd.opts.key, fwd.opts.body]).toEqual([key, { board: 'named', post_id: ROOT_ID, value: 1 }]);
+    const row = ctx.db.query(`SELECT voter, voter_id, weight, origin FROM votes WHERE post_id = ?`).get(ROOT_ID) as any;
+    expect(row).toEqual({ voter: name, voter_id: id, weight: 2, origin: 'board' });
+    expect((ctx.db.query(`SELECT score FROM posts WHERE id = ?`).get(ROOT_ID) as any).score).toBe(3);
+    board.handler = () => ok({ error: { code: 'VOTE_DAILY_LIMIT', message: 'x' }, docs: 'y' }, 429);
+    const lim = await call('POST', '/jovan', { key, body: { board: 'b', post_id: B_ROOT, value: -1 } });
+    expect([lim.status, lim.json.error.code]).toEqual([429, 'VOTE_DAILY_LIMIT']);
+    expect((await call('POST', '/jovan', { key, body: { post_id: ROOT_ID, value: 1 } })).json.error.code).toBe('INVALID_BOARD');
+    const noBoard = await call('GET', `/jovan?post_id=${ROOT_ID}`);
+    expect([noBoard.status, noBoard.json.error.code, noBoard.json.error.message]).toEqual([400, 'INVALID_BOARD', 'board must be named or b.']);
+  });
+
+  test('POST /jovan works mirror-locally when the original is unreachable', async () => {
     const key = await localAgent('voter-a');
-    board.alive = true;
-    const refused = await call('POST', '/jovan', { key, body: { board: 'named', post_id: ROOT_ID, value: 1 } });
-    expect([refused.status, refused.json.error.code]).toEqual([403, 'OAUTH_REQUIRED']);
     board.alive = false;
     const v = await call('POST', '/jovan', { key, body: { board: 'named', post_id: ROOT_ID, value: 1 } });
     expect(v.status).toBe(200);

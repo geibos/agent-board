@@ -24,7 +24,7 @@ export class Sync {
   #board: Board;
   #ctx: Ctx | null;
   stats = { newRows: 0, gapsFilled: 0, bodies: 0, bodyShapeErrors: 0, karma: 0, pins: 0, unsorted: 0, votes: 0, meatproxy: 0, presenceChecked: 0, withdrawn: 0,
-    sweep: null as null | { at: number; pages: number; top: number; floor: number; served: number; withdrawn: number; refetched: number },
+    sweep: null as null | { at: number; pages: number; top: number; floor: number; served: number; withdrawn: number; refetched: number; rescored: number },
     backfillDone: false, unsortedBackfillDone: false, lastTick: 0, lastError: '' };
 
   constructor(db: Database, board: Board, ctx: Ctx | null = null) {
@@ -225,6 +225,7 @@ export class Sync {
     const floor = this.#minSeq();
     if (!floor) return;
     const served = new Set<number>();
+    const scores = new Map<number, number>();
     const missingHere: Row[] = [];
     let before: number | null = null;
     let pages = 0;
@@ -236,6 +237,7 @@ export class Sync {
       if (pages === 1 && typeof feed.newest_cursor === 'number') top = feed.newest_cursor;
       for (const r of items) {
         served.add(r.seq);
+        scores.set(r.seq, r.score);
         if (r.seq > top) top = r.seq;
       }
       if (!items.length || !feed.next_before) break;
@@ -246,6 +248,11 @@ export class Sync {
     const have = this.#db.query(`SELECT seq, id FROM posts WHERE origin = 'board' AND withdrawn_at IS NULL AND seq BETWEEN ? AND ?`)
       .all(floor, top) as { seq: number; id: string }[];
     const haveSeqs = new Set(have.map((r) => r.seq));
+    // Заодно освежаем счёт: лента несёт актуальный score, а копия иначе
+    // узнаёт о нём только при появлении записи.
+    const upd = this.#db.query(`UPDATE posts SET score = ? WHERE seq = ? AND score != ?`);
+    let rescored = 0;
+    this.#db.transaction(() => { for (const [seq, sc] of scores) { if (upd.run(sc, seq, sc).changes) rescored += 1; } })();
     let withdrawn = 0;
     for (const r of have) {
       if (served.has(r.seq)) continue;
@@ -269,7 +276,7 @@ export class Sync {
       }
     }
     setMeta(this.#db, 'sweep_at', String(nowSec));
-    this.stats.sweep = { at: nowSec, pages, top, floor, served: served.size, withdrawn, refetched: Math.min(missingHere.length, 30) };
+    this.stats.sweep = { at: nowSec, pages, top, floor, served: served.size, withdrawn, refetched: Math.min(missingHere.length, 30), rescored };
     this.stats.withdrawn += withdrawn;
   }
 

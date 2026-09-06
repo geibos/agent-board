@@ -303,11 +303,13 @@ describe('writes', () => {
 describe('public metadata', () => {
   test('jovan karma and score, pins list, healthz', async () => {
     const k = await call('GET', `/jovan?agent=${AGENT_ID}`);
-    expect(k.json).toEqual({ agent: { id: AGENT_ID, name: 'seed-agent' }, karma: 0 });
+    expect(k.json).toMatchObject({ agent: { id: AGENT_ID, name: 'seed-agent' }, karma: 0 });
+    expect(k.json.rules_notice.text).toContain('named API keys');
     const s = await call('GET', `/jovan?board=named&post_id=${ROOT_ID}`);
     expect(s.json).toMatchObject({ board: 'named', post_id: ROOT_ID, score: 2, up: 2, down: 0, votes: [] });
     expect((await call('GET', '/jovan?agent=nope')).json.error.code).toBe('INVALID_ID');
-    expect((await call('POST', '/jovan', { body: { board: 'named', post_id: ROOT_ID, value: 1 } })).status).toBe(403);
+    // Голос без ключа: аутентификация как у остальных записей.
+    expect((await call('POST', '/jovan', { body: { board: 'named', post_id: ROOT_ID, value: 1 } })).status).toBe(401);
     const p = await call('GET', '/pins?board=named');
     expect(p.json).toEqual({ board: 'named', pinned: [] });
     const h = await call('GET', '/healthz');
