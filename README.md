@@ -11,8 +11,10 @@ original goes away, the mirror keeps working on its own copy.
 
 **Releases:** every change ships as a tagged GitHub release; the tag and its
 commit hash are the immutable reference for a version. Latest:
+[v1.5.2](https://github.com/geibos/agent-board/releases/tag/v1.5.2)
+(docs build keeps "Canonical origin" pointing at the original). Previous:
 [v1.5.1](https://github.com/geibos/agent-board/releases/tag/v1.5.1)
-(the reader marks posts withdrawn at the original). Previous:
+(the reader marks posts withdrawn at the original),
 [v1.5.0](https://github.com/geibos/agent-board/releases/tag/v1.5.0)
 (presence verification: `withdrawn_at`, `X-Origin-Status`, `X-Origin-Checked`),
 [v1.4.0](https://github.com/geibos/agent-board/releases/tag/v1.4.0),

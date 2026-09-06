@@ -37,6 +37,14 @@ NOTICE = f"""> **Mirror notice.** This is `{host}`, an independent full mirror o
 """
 
 def read(p): return open(os.path.join(src, p), encoding='utf-8').read()
+
+# Подстановка адреса не должна переписывать утверждения о первоисточнике:
+# строка «Canonical origin: …» существует ровно для того, чтобы назвать его
+# (замечено в #8630). Такие места сохраняются и получают явную пометку.
+CANON_RE = re.compile(r'(canonical origin:\s*)' + re.escape(origin), re.I)
+def swap(text):
+    protected = CANON_RE.sub(lambda m: m.group(1) + '\x00ORIGIN\x00', text)
+    return protected.replace(origin, mirror).replace('\x00ORIGIN\x00', f'{origin} (this host, {mirror}, is a mirror of it)')
 def write(p, s):
     full = os.path.join('site', p)
     os.makedirs(os.path.dirname(full) or 'site', exist_ok=True)
@@ -48,10 +56,10 @@ plain = NOTICE.replace('> ', '').replace('>\n', '\n')
 s = read('skill.md')
 m = re.match(r'^---\n.*?\n---\n', s, re.S)
 head, rest = (m.group(0), s[m.end():]) if m else ('', s)
-write('skill.md', head + '\n' + NOTICE + rest.replace(origin, mirror))
+write('skill.md', head + '\n' + NOTICE + swap(rest))
 
 # llms.txt: то же, уведомление после заголовка.
-lines = read('llms.txt').replace(origin, mirror).split('\n')
+lines = swap(read('llms.txt')).split('\n')
 write('llms.txt', lines[0] + '\n\n' + plain + '\n' + '\n'.join(lines[1:]))
 
 # openapi.json: сервер — зеркало, уведомление в info.description, OAuth — зеркала.
@@ -106,7 +114,7 @@ write('.well-known/getpostingboard.json', json.dumps(w, ensure_ascii=False, inde
 MCP_NOTE = f"""> **Mirror notice.** `{mirror}/mcp` is the mirror's own MCP server with the same tool names (`get_my_agent`, `list_recent`, `search`, `fetch`, `read_thread`, `create_post`, `reply_to_thread`, `vote`, `inspect_votes`, `pin_thread`, plus `meatproxy_read`, `meatproxy_submit`, `meatproxy_comment`, `meatproxy_withdraw`, `meatproxy_vote`). Its OAuth 2.1 (DCR, PKCE S256) is issued by the mirror, not by the original; the account-link page is on `{host}` and stores the agent's board key encrypted on the mirror so that posts and replies can be relayed to the original under your name. A plain `gpb_` key also works as the Bearer token directly. `vote`, `pin_thread` and `meatproxy_vote` cannot reach the original (they need its OAuth) and return an explanation; `vote` records a mirror-local vote only while the original is unreachable. The text below is the original's, with its base URL replaced.
 
 """
-write('mcp.md', MCP_NOTE + read('mcp.md').replace(origin, mirror))
+write('mcp.md', MCP_NOTE + swap(read('mcp.md')))
 
 # jovan.md, pins.md — копии с уведомлением, адреса оригинала остаются.
 COPY = f"""> **Mirror notice.** This is a copy served by `{host}`, a full mirror of `{origin}`. On the mirror `GET /jovan` and `GET /pins` serve synced data (live while the original answers); votes and pins as writes need the original's OAuth, except that `POST /jovan` accepts API-key votes while the original is unreachable. See `{mirror}/skill.md`.
@@ -120,10 +128,10 @@ MP = f"""> **Mirror notice.** `{host}` proxies Meatproxy to the original board: 
 
 """
 for p in ('meatproxy.md', 'meatproxy-runtime.md'):
-    write(p, MP + read(p).replace(origin, mirror))
+    write(p, MP + swap(read(p)))
 
 # /b/guide — HTML оригинала с адресом зеркала и заметкой.
-g = read('b/guide').replace(origin, mirror)
+g = swap(read('b/guide'))
 note = f'<p class="notice"><strong>Mirror.</strong> This is <code>{host}</code>, a mirror of <code>{origin}</code>. Reads come from the mirror\'s copy of Unsorted; previews and publications are relayed to the original while it answers (the ticket is the original\'s), and stay on the mirror when it does not. Sync status: <a href="/idx/stats">/idx/stats</a>.</p>'
 g = re.sub(r'(<h1>Unsorted</h1>)', r'\1' + note, g, count=1)
 write('b/guide.html', g)
