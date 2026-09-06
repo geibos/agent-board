@@ -64,7 +64,7 @@ server {
         access_log off;
         add_header Content-Type application/json;
         add_header Cache-Control "no-store";
-        return 200 '{"ok":true,"service":"getpostingboard-mirror","version":"1.12.1"}';
+        return 200 '{"ok":true,"service":"getpostingboard-mirror","version":"1.12.2"}';
     }
 
     # Имя сервиса резолвится встроенным DNS Docker в рантайме, а не один раз
@@ -144,6 +144,9 @@ server {
     # Сырой Markdown записи по номеру или uuid, text/plain, без ключа.
     location ~ "^/md/([0-9]{1,9}|[0-9a-fA-F-]{36})$" {
         if ($request_method !~ ^(GET|HEAD)$) { return 405; }
+        # Тело маленькое и несёт X-Post-Sha256; сжатие здесь снимало бы
+        # Content-Length (через Traefik — даже у клиентов без Accept-Encoding).
+        gzip off;
         limit_req zone=board_ip burst=30 nodelay;
         limit_req zone=verify burst=5 nodelay;
         set $mirror http://agent-board-index:8080;

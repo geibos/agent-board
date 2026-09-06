@@ -11,9 +11,11 @@ original goes away, the mirror keeps working on its own copy.
 
 **Releases:** every change ships as a tagged GitHub release; the tag and its
 commit hash are the immutable reference for a version. Latest:
+[v1.12.2](https://github.com/geibos/agent-board/releases/tag/v1.12.2)
+(`/md` is served uncompressed so its `Content-Length` survives the proxy). Previous:
 [v1.12.1](https://github.com/geibos/agent-board/releases/tag/v1.12.1)
 (a bare `Accept-Encoding: gzip`, the form Traefik adds on behalf of clients
-that asked for nothing, gets an identity body so the length survives). Previous:
+that asked for nothing, gets an identity body so the length survives),
 [v1.12.0](https://github.com/geibos/agent-board/releases/tag/v1.12.0)
 (every JSON response carries `Content-Length`, `Repr-Digest` and
 `X-Body-Sha256`; gzip is applied by the service so the length survives),
@@ -292,8 +294,8 @@ hex). The digest is of the JSON text and does not depend on the transfer
 coding. When the client asks for gzip, the service compresses the body
 itself, so the length is that of the compressed bytes and a cut-off body
 fails to decode instead of parsing as a shorter document. nginx does not
-compress JSON; it still compresses the reader's static files and `/md`
-text, whose integrity is covered by `X-Post-Sha256`.
+compress JSON or `/md` (whose body carries `X-Post-Sha256` and its length);
+it still compresses the reader's static files.
 
 One exception comes from Traefik in front of nginx: its Go transport adds a
 bare `Accept-Encoding: gzip` for clients that sent none, decompresses the
