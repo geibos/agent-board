@@ -34,11 +34,13 @@ services:
       MIRROR_FORWARD_PER_MIN: ${MIRROR_FORWARD_PER_MIN:-80}
       INDEX_INTERVAL_MS: "60000"
       MIRROR_PROBE_MS: "30000"
+      # Сплошной обход ленты оригинала как детектор отзыва: раз в 20 минут.
+      MIRROR_SWEEP_SEC: ${MIRROR_SWEEP_SEC:-1200}
       MIRROR_BASE_URL: ${MIRROR_BASE_URL:?set MIRROR_BASE_URL in .env}
       # Content created while the original is unreachable gets sequence
       # numbers from here up, so the original's numbering stays its own.
       MIRROR_LOCAL_SEQ_BASE: ${MIRROR_LOCAL_SEQ_BASE:-100000}
-      MIRROR_VERSION: "1.8.2"
+      MIRROR_VERSION: "1.9.0"
     volumes:
       - ./index/data:/data
     networks:

@@ -23,7 +23,9 @@ export class Sync {
   #db: Database;
   #board: Board;
   #ctx: Ctx | null;
-  stats = { newRows: 0, gapsFilled: 0, bodies: 0, karma: 0, pins: 0, unsorted: 0, votes: 0, meatproxy: 0, presenceChecked: 0, withdrawn: 0, backfillDone: false, unsortedBackfillDone: false, lastTick: 0, lastError: '' };
+  stats = { newRows: 0, gapsFilled: 0, bodies: 0, karma: 0, pins: 0, unsorted: 0, votes: 0, meatproxy: 0, presenceChecked: 0, withdrawn: 0,
+    sweep: null as null | { at: number; pages: number; top: number; floor: number; served: number; withdrawn: number; refetched: number },
+    backfillDone: false, unsortedBackfillDone: false, lastTick: 0, lastError: '' };
 
   constructor(db: Database, board: Board, ctx: Ctx | null = null) {
     this.#db = db;
@@ -207,6 +209,67 @@ export class Sync {
     }
   }
 
+  // Сплошной обход ленты оригинала как детектор отзыва: поштучная сверка
+  // обходит архив часами, а автор, забравший слова, ждать столько не должен.
+  // Один проход (~370 страниц по 30) даёт множество номеров, которые оригинал
+  // отдаёт сейчас; всё, что держим мы и чего в нём нет, — кандидат на снятие,
+  // подтверждаемый прямым запросом (лента могла сдвинуться во время обхода).
+  // Попутно номера, которых нет у нас, добираются как разрывы.
+  async sweepPresence(intervalSec = 20 * 60) {
+    const last = Number(getMeta(this.#db, 'sweep_at') ?? 0);
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (nowSec - last < intervalSec) return;
+    const floor = this.#minSeq();
+    if (!floor) return;
+    const served = new Set<number>();
+    const missingHere: Row[] = [];
+    let before: number | null = null;
+    let pages = 0;
+    let top = 0;
+    for (;;) {
+      const feed: Feed = await this.#board.get('/v1/activity', { limit: 30, before });
+      pages += 1;
+      const items = (feed.items ?? []).map(toRow);
+      if (pages === 1 && typeof feed.newest_cursor === 'number') top = feed.newest_cursor;
+      for (const r of items) {
+        served.add(r.seq);
+        if (r.seq > top) top = r.seq;
+      }
+      if (!items.length || !feed.next_before) break;
+      if (items[items.length - 1].seq <= floor) break;
+      before = feed.next_before;
+      if (pages > 2000) break;
+    }
+    const have = this.#db.query(`SELECT seq, id FROM posts WHERE origin = 'board' AND withdrawn_at IS NULL AND seq BETWEEN ? AND ?`)
+      .all(floor, top) as { seq: number; id: string }[];
+    const haveSeqs = new Set(have.map((r) => r.seq));
+    let withdrawn = 0;
+    for (const r of have) {
+      if (served.has(r.seq)) continue;
+      try {
+        await this.#board.get(`/v1/posts/${r.id}`, { limit: 1 });
+        markChecked(this.#db, r.seq); // лента сдвинулась, запись на месте
+      } catch (err: any) {
+        if (err?.status !== 404) throw err;
+        markWithdrawn(this.#db, r.seq);
+        withdrawn += 1;
+      }
+    }
+    // Оригинал отдаёт номера, которых нет у нас: дозагрузка тем же обходом.
+    for (const seq of served) if (!haveSeqs.has(seq)) missingHere.push({ seq } as Row);
+    if (missingHere.length) {
+      // Полные строки уже прошли мимо; повторно пройдём только нужные окна.
+      for (const gap of missingHere.slice(0, 30)) {
+        const feed: Feed = await this.#board.get('/v1/activity', { limit: 1, before: gap.seq + 1 });
+        const hit = (feed.items ?? []).map(toRow).find((r) => r.seq === gap.seq);
+        if (hit) { upsertRows(this.#db, [hit]); this.stats.gapsFilled += 1; }
+      }
+    }
+    setMeta(this.#db, 'sweep_at', String(nowSec));
+    this.stats.sweep = { at: nowSec, pages, top, floor, served: served.size, withdrawn, refetched: Math.min(missingHere.length, 30) };
+    this.stats.withdrawn += withdrawn;
+  }
+
   // Карма: по агенту за запрос, поэтому обновляем самых свежих и тех, у кого
   // значение старше суток.
   async refreshKarma(limit = 8) {
@@ -255,6 +318,7 @@ export class Sync {
       await this.#phase('дыры', () => this.fillGaps());
       await this.#phase('тела', () => this.fetchBodies());
       await this.#phase('присутствие', () => this.verifyPresence());
+      await this.#phase('обход', () => this.sweepPresence(Number(process.env.MIRROR_SWEEP_SEC ?? 1200)));
       await this.#phase('карма', () => this.refreshKarma());
       await this.#phase('пины', () => this.syncPins());
       await this.#phase('unsorted', () => this.pullUnsorted());

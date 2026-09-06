@@ -481,6 +481,36 @@ describe('presence at the original', () => {
   });
 });
 
+describe('presence sweep', () => {
+  test('a full walk of the original feed marks held posts the original no longer serves', async () => {
+    const A = 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1';
+    const B = 'b1b1b1b1-b1b1-4b1b-8b1b-b1b1b1b1b1b1';
+    const mk = (seq: number, id: string) => ({ seq, id, thread_id: null, agent_id: AGENT_ID, author: 'seed-agent', topic: 'general', title: `t${seq}`, body: 'body '.repeat(60), preview: 'p', score: 0, created_at: 1788600000 + seq });
+    upsertRows(ctx.db, [mk(20, A), mk(21, B)]);
+    // Лента оригинала отдаёт 21 и 10, но не 20; прямой запрос 20 → 404 (снято),
+    // а запись 21 на месте. Запись 25 есть у оригинала, но не у нас.
+    board.handler = (m, p, o) => {
+      if (p === '/v1/activity') {
+        const before = o.params?.before ?? null;
+        if (o.params?.limit === 1 && before === 26) return ok({ items: [{ seq: 25, id: '25252525-2525-4525-8525-252525252525', thread_id: null, agent_id: AGENT_ID, author: 'seed-agent', topic: 'general', title: 't25', created_at: 1788600025, preview: 'p', score: 0 }], next_before: null });
+        if (before === null) return ok({ items: [{ seq: 25, id: '25252525-2525-4525-8525-252525252525', thread_id: null, agent_id: AGENT_ID, author: 'seed-agent', topic: 'general', title: 't25', created_at: 1788600025, preview: 'p', score: 0 }, { seq: 21, id: B, thread_id: null, agent_id: AGENT_ID, author: 'seed-agent', topic: 'general', title: 't21', created_at: 1788600021, preview: 'p', score: 0 }, { seq: 10, id: ROOT_ID, thread_id: null, agent_id: AGENT_ID, author: 'seed-agent', topic: 'general', title: 't10', created_at: 1788600010, preview: 'p', score: 0 }], next_before: 10, newest_cursor: 25 });
+        return ok({ items: [], next_before: null });
+      }
+      if (p === `/v1/posts/${A}`) return ok({ error: { code: 'NOT_FOUND' } }, 404);
+      return ok({ post: {}, replies: { items: [] } });
+    };
+    const sync = new Sync(ctx.db, board as any, ctx);
+    await sync.sweepPresence(0);
+    const rows = Object.fromEntries((ctx.db.query(`SELECT seq, withdrawn_at IS NOT NULL AS w FROM posts ORDER BY seq`).all() as any[]).map((r) => [r.seq, r.w]));
+    expect(rows).toEqual({ 10: 0, 20: 1, 21: 0, 25: 0 });
+    expect(sync.stats.sweep).toMatchObject({ pages: 1, top: 25, floor: 10, served: 3, withdrawn: 1, refetched: 1 });
+    // Повтор внутри интервала не ходит на оригинал.
+    const before = sync.stats.sweep!.at;
+    await sync.sweepPresence(1200);
+    expect(sync.stats.sweep!.at).toBe(before);
+  });
+});
+
 describe('sync robustness', () => {
   const item = (seq: number) => ({ seq, id: `${String(seq).padStart(8, '0')}-0000-4000-8000-000000000000`, thread_id: null, agent_id: AGENT_ID, author: 'seed-agent', topic: 'general', title: `t${seq}`, created_at: 1788600000 + seq, preview: `p${seq}`, score: 0 });
 

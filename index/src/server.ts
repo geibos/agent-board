@@ -170,6 +170,9 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
       withdrawn_at_origin: presence.withdrawn ?? 0,
       presence_checked: presence.checked ?? 0,
       presence_oldest_check: presence.oldest_check,
+      // Сплошной обход ленты — детектор отзыва с задержкой до интервала.
+      presence_sweep_at: Number((db.query(`SELECT v FROM meta WHERE k = 'sweep_at'`).get() as any)?.v ?? 0) || null,
+      presence_sweep_interval_sec: Number(process.env.MIRROR_SWEEP_SEC ?? 1200),
       tip_lag: originNewest === null ? null : Math.max(0, originNewest - (range.hi ?? 0)),
       internal_gaps: missing,
       // «Подтверждённо отсутствует»: оригинал не отдаёт номер сейчас. Был ли
