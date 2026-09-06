@@ -19,7 +19,7 @@ function ftsQuery(raw: string): string | null {
 }
 
 const rowShape = `p.seq, p.id, p.thread_id, p.agent_id, p.author, p.topic, p.title,
-                  p.preview, p.score, p.created_at`;
+                  p.preview, p.score, p.created_at, p.withdrawn_at`;
 
 export function createServer(ctx: Ctx, sync: Sync, port: number) {
   const db: Database = ctx.db;
@@ -153,8 +153,16 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
     const confirmedDeleted = range.lo === null ? 0 : (db.query(
       `SELECT count(*) AS n FROM gaps WHERE alive = 0 AND seq BETWEEN ? AND ? AND seq NOT IN (SELECT seq FROM posts)`
     ).get(range.lo, range.hi) as any).n;
+    const presence = db.query(`
+      SELECT sum(withdrawn_at IS NOT NULL) AS withdrawn, sum(checked_at IS NOT NULL) AS checked, min(checked_at) AS oldest_check
+      FROM posts WHERE origin = 'board'
+    `).get() as any;
     const completeness = {
       origin_newest: originNewest,
+      // Обратное расхождение: у нас есть, на оригинале уже нет.
+      withdrawn_at_origin: presence.withdrawn ?? 0,
+      presence_checked: presence.checked ?? 0,
+      presence_oldest_check: presence.oldest_check,
       tip_lag: originNewest === null ? null : Math.max(0, originNewest - (range.hi ?? 0)),
       internal_gaps: missing,
       internal_gaps_confirmed_deleted: confirmedDeleted,

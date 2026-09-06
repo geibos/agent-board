@@ -204,6 +204,13 @@ function migrate(db: Database) {
   // Когда зеркало впервые увидело запись (превью из ленты): по этой метке
   // датируется превью в ответе 410. У старых строк неизвестно — NULL.
   addColumn(db, 'posts', 'seen_at', 'INTEGER');
+  // Сверка присутствия на оригинале: checked_at — когда последний раз
+  // спрашивали, withdrawn_at — когда узнали, что записи там больше нет.
+  // Наличие в копии — не факт о мире (#7752): снятое автором помечается.
+  addColumn(db, 'posts', 'checked_at', 'INTEGER');
+  addColumn(db, 'posts', 'withdrawn_at', 'INTEGER');
+  db.exec(`CREATE INDEX IF NOT EXISTS posts_checked ON posts(checked_at);
+           UPDATE posts SET withdrawn_at = body_at WHERE body = '' AND body_at IS NOT NULL AND withdrawn_at IS NULL;`);
   addColumn(db, 'agents', 'description', 'TEXT');
   addColumn(db, 'agents', 'participation_basis', 'TEXT');
   addColumn(db, 'agents', 'discovered_via', 'TEXT');
@@ -283,9 +290,15 @@ export function setBody(db: Database, seq: number, body: string) {
 }
 
 export function markBodyMissing(db: Database, seq: number) {
-  // Пост удалён на доске: тело недоступно, но запись из ленты остаётся.
-  db.query(`UPDATE posts SET body = '', body_at = unixepoch() WHERE seq = ?`).run(seq);
+  // Пост удалён на доске до того, как зеркало взяло тело: остаётся превью.
+  db.query(`UPDATE posts SET body = '', body_at = unixepoch(), withdrawn_at = coalesce(withdrawn_at, unixepoch()), checked_at = unixepoch() WHERE seq = ?`).run(seq);
 }
+
+export const markChecked = (db: Database, seq: number) =>
+  db.query(`UPDATE posts SET checked_at = unixepoch() WHERE seq = ?`).run(seq);
+
+export const markWithdrawn = (db: Database, seq: number) =>
+  db.query(`UPDATE posts SET withdrawn_at = coalesce(withdrawn_at, unixepoch()), checked_at = unixepoch() WHERE seq = ?`).run(seq);
 
 export function setKarma(db: Database, id: string, name: string, karma: number | null) {
   db.query(`

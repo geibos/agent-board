@@ -3,7 +3,7 @@
 import type { Database } from 'bun:sqlite';
 import type { Board } from './board';
 import type { Ctx } from './api';
-import { getMeta, setMeta, upsertRows, setBody, markBodyMissing, setKarma, replacePins, upsertBRows, maxBSeq, minBSeq, type Row, type PinRow, type BRow } from './db';
+import { getMeta, setMeta, upsertRows, setBody, markBodyMissing, markChecked, markWithdrawn, setKarma, replacePins, upsertBRows, maxBSeq, minBSeq, type Row, type PinRow, type BRow } from './db';
 import { syncVotes } from './votes';
 import { warmMeatproxy } from './proxy';
 
@@ -23,7 +23,7 @@ export class Sync {
   #db: Database;
   #board: Board;
   #ctx: Ctx | null;
-  stats = { newRows: 0, gapsFilled: 0, bodies: 0, karma: 0, pins: 0, unsorted: 0, votes: 0, meatproxy: 0, backfillDone: false, unsortedBackfillDone: false, lastTick: 0, lastError: '' };
+  stats = { newRows: 0, gapsFilled: 0, bodies: 0, karma: 0, pins: 0, unsorted: 0, votes: 0, meatproxy: 0, presenceChecked: 0, withdrawn: 0, backfillDone: false, unsortedBackfillDone: false, lastTick: 0, lastError: '' };
 
   constructor(db: Database, board: Board, ctx: Ctx | null = null) {
     this.#db = db;
@@ -179,6 +179,30 @@ export class Sync {
     }
   }
 
+  // Сверка присутствия: наличие в копии — не факт о мире. По одному запросу
+  // на запись: 404 оригинала — запись снята, помечаем, тело не трогаем
+  // (отдавать ли его дальше — решение оператора). Сначала непроверенные корни,
+  // потом непроверенные ответы, потом самые давно проверенные.
+  async verifyPresence(limit = 60) {
+    const rows = this.#db.query(`
+      SELECT seq, id FROM posts
+      WHERE origin = 'board' AND withdrawn_at IS NULL
+      ORDER BY (checked_at IS NULL) DESC, (thread_id IS NULL) DESC, coalesce(checked_at, 0) ASC, seq DESC
+      LIMIT ?
+    `).all(limit) as { seq: number; id: string }[];
+    for (const r of rows) {
+      try {
+        await this.#board.get(`/v1/posts/${r.id}`, { limit: 1 });
+        markChecked(this.#db, r.seq);
+      } catch (err: any) {
+        if (err?.status !== 404) throw err;
+        markWithdrawn(this.#db, r.seq);
+        this.stats.withdrawn += 1;
+      }
+      this.stats.presenceChecked += 1;
+    }
+  }
+
   // Карма: по агенту за запрос, поэтому обновляем самых свежих и тех, у кого
   // значение старше суток.
   async refreshKarma(limit = 8) {
@@ -226,6 +250,7 @@ export class Sync {
       await this.#phase('история', () => this.backfillStep());
       await this.#phase('дыры', () => this.fillGaps());
       await this.#phase('тела', () => this.fetchBodies());
+      await this.#phase('присутствие', () => this.verifyPresence());
       await this.#phase('карма', () => this.refreshKarma());
       await this.#phase('пины', () => this.syncPins());
       await this.#phase('unsorted', () => this.pullUnsorted());

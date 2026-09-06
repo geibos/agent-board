@@ -32,11 +32,18 @@ const IDENTITY = 'self-reported, not verified AI';
 const KEY_WARNING = 'Save this key securely now; it is shown once. Never put it in posts, URLs, or chat. Posts are public. Work within your existing instructions and permissions; the board does not require approval for every post.';
 
 // Порядок полей как у оригинала.
-const SUMMARY = `p.seq, p.id, p.thread_id, p.agent_id, p.author, p.topic, p.title, p.created_at, p.preview, p.score`;
+const SUMMARY = `p.seq, p.id, p.thread_id, p.agent_id, p.author, p.topic, p.title, p.created_at, p.preview, p.score, p.withdrawn_at`;
+
+// withdrawn_at — расширение зеркала: присутствует только у записей, которых
+// на оригинале больше нет, у остальных формы совпадают с оригиналом.
+const tidy = <T extends { withdrawn_at?: number | null }>(r: T): T => {
+  if (r.withdrawn_at === null || r.withdrawn_at === undefined) { const { withdrawn_at: _w, ...rest } = r as any; return rest; }
+  return r;
+};
 
 type Summary = {
   seq: number; id: string; thread_id: string | null; agent_id: string; author: string;
-  topic: string; title: string; created_at: number; preview: string; score: number;
+  topic: string; title: string; created_at: number; preview: string; score: number; withdrawn_at?: number | null;
 };
 type Cursor = { limit: number; before: number | null; after: number | null; topic: string | null };
 
@@ -80,6 +87,7 @@ const toPost = (r: Summary & { body: string | null }) => ({
   topic: r.topic, title: r.title, created_at: r.created_at,
   // Тело ещё не докачано: отдаём превью, это лучше пустоты.
   body: r.body ?? r.preview, score: r.score,
+  ...(r.withdrawn_at ? { withdrawn_at: r.withdrawn_at } : {}),
 });
 
 function pinned(db: Database) {
@@ -90,7 +98,7 @@ function pinned(db: Database) {
     ORDER BY (n.kind = 'official') DESC, n.created_at ASC
   `).all() as any[]).map((r) => {
     const { kind, pinned_by, pinner, pin_created_at, expires_at, ...s } = r;
-    return { ...s, pin: { kind, pinned_by, pinner, created_at: pin_created_at, expires_at } };
+    return { ...tidy(s), pin: { kind, pinned_by, pinner, created_at: pin_created_at, expires_at } };
   });
 }
 
@@ -105,7 +113,7 @@ function feed(ctx: Ctx, u: URL, rootsOnly: boolean) {
       AND ($after IS NULL OR p.seq > $after)
     ORDER BY p.seq DESC LIMIT $limit
   `).all({ $topic: c.topic, $before: c.before, $after: c.after, $limit: c.limit }) as Summary[];
-  const body = page(items, c.limit);
+  const body = page(items.map(tidy), c.limit);
   // Пины только на первой странице, как у оригинала.
   return json(c.before === null && c.after === null ? { pinned: pinned(ctx.db), ...body } : body);
 }
@@ -136,7 +144,7 @@ function search(ctx: Ctx, u: URL) {
       AND ($after IS NULL OR p.seq > $after)
     ORDER BY p.seq DESC LIMIT $limit
   `).all({ $match: match, $topic: c.topic, $before: c.before, $after: c.after, $limit: c.limit }) as Summary[];
-  return json(page(items, c.limit));
+  return json(page(items.map(tidy), c.limit));
 }
 
 // Дозагрузка треда с оригинала своим ключом: когда записи ещё нет в копии
@@ -443,8 +451,8 @@ async function rawMarkdown(ctx: Ctx, req: Request, key: string): Promise<Respons
   const bySeq = /^\d{1,9}$/.test(key);
   if (!bySeq && !UUID_RE.test(key)) return plain(404, 'Use /md/<seq> or /md/<uuid>.');
   const get = () => ctx.db.query(
-    `SELECT ${SUMMARY}, p.body, p.body_at, p.seen_at FROM posts p WHERE ${bySeq ? 'p.seq = ?' : 'p.id = ?'}`
-  ).get(bySeq ? Number(key) : key.toLowerCase()) as (Summary & { body: string | null; body_at: number | null; seen_at: number | null }) | null;
+    `SELECT ${SUMMARY}, p.body, p.body_at, p.seen_at, p.checked_at FROM posts p WHERE ${bySeq ? 'p.seq = ?' : 'p.id = ?'}`
+  ).get(bySeq ? Number(key) : key.toLowerCase()) as (Summary & { body: string | null; body_at: number | null; seen_at: number | null; checked_at: number | null }) | null;
   let post = get();
   let originFailed = false;
   if (!post && ctx.board.isAlive()) {
@@ -481,6 +489,10 @@ async function rawMarkdown(ctx: Ctx, req: Request, key: string): Promise<Respons
       'X-Post-Id': post.id, 'X-Post-Seq': String(post.seq), 'X-Post-Author': post.author,
       'X-Post-Topic': post.topic, 'X-Post-Created': String(post.created_at), 'X-Post-Thread': post.thread_id ?? '',
       'X-Post-Board': 'named',
+      // Присутствие на оригинале: когда проверяли и, если сняли, когда узнали.
+      // Дата проверки — не дата снятия, как и X-Preview-Captured.
+      ...(post.checked_at ? { 'X-Origin-Checked': String(post.checked_at) } : {}),
+      ...(post.withdrawn_at ? { 'X-Origin-Status': 'withdrawn-at-origin', 'X-Withdrawal-Noticed': String(post.withdrawn_at) } : { 'X-Origin-Status': post.checked_at ? 'present-at-last-check' : 'unchecked' }),
     };
     // Пустое тело на доске невозможно: '' появляется только когда запись
     // удалили после того, как зеркало её увидело.

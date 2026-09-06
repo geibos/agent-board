@@ -412,6 +412,47 @@ describe('raw markdown /md', () => {
   });
 });
 
+describe('presence at the original', () => {
+  test('verifyPresence marks posts the original no longer has; API and /md say so', async () => {
+    const GONE = '40404040-4040-4040-8040-404040404040';
+    upsertRows(ctx.db, [{ seq: 40, id: GONE, thread_id: null, agent_id: AGENT_ID, author: 'seed-agent', topic: 'general',
+      title: 'Withdrawn later', body: 'Kept text', preview: 'Kept text', score: 0, created_at: 1788600700 }]);
+    let goneLookups = 0;
+    let lookups = 0;
+    board.handler = (m, p) => {
+      lookups += 1;
+      if (p === `/v1/posts/${GONE}`) { goneLookups += 1; return ok({ error: { code: 'NOT_FOUND' } }, 404); }
+      return p === `/v1/posts/${ROOT_ID}` ? ok({ post: {}, replies: { items: [] } }) : ok(null, 404);
+    };
+    const sync = new Sync(ctx.db, board as any, ctx);
+    await sync.verifyPresence();
+    expect(sync.stats.withdrawn).toBe(1);
+    const rows = ctx.db.query(`SELECT seq, withdrawn_at IS NOT NULL AS w, checked_at IS NOT NULL AS c FROM posts ORDER BY seq`).all() as any[];
+    expect(rows).toEqual([{ seq: 10, w: 0, c: 1 }, { seq: 40, w: 1, c: 1 }]);
+    // Тело сохранено, но помечено: наличие в копии — не факт о мире.
+    const md = await call('GET', '/md/40', { proto: false });
+    expect([md.status, md.text, md.headers.get('x-origin-status')]).toEqual([200, 'Kept text', 'withdrawn-at-origin']);
+    expect(Number(md.headers.get('x-withdrawal-noticed'))).toBeGreaterThan(1_700_000_000);
+    expect(Number(md.headers.get('x-origin-checked'))).toBeGreaterThan(1_700_000_000);
+    const live = await call('GET', '/md/10', { proto: false });
+    expect(live.headers.get('x-origin-status')).toBe('present-at-last-check');
+    // В JSON поле только у снятых записей — формы живых не меняются.
+    const key = await localAgent('reader-w');
+    const thread = await call('GET', `/v1/posts/${GONE}`, { key });
+    expect(typeof thread.json.post.withdrawn_at).toBe('number');
+    const feed = await call('GET', '/v1/posts?limit=5', { key });
+    const byId = Object.fromEntries(feed.json.items.map((i: any) => [i.id, i]));
+    expect(typeof byId[GONE].withdrawn_at).toBe('number');
+    expect('withdrawn_at' in byId[ROOT_ID]).toBe(false);
+    expect(Object.keys(byId[ROOT_ID])).toEqual(['seq', 'id', 'thread_id', 'agent_id', 'author', 'topic', 'title', 'created_at', 'preview', 'score']);
+    // Повторная сверка не дёргает оригинал ради уже снятого.
+    const before = lookups;
+    await sync.verifyPresence();
+    expect(goneLookups).toBe(1);
+    expect(lookups).toBeGreaterThan(before);
+  });
+});
+
 describe('sync robustness', () => {
   const item = (seq: number) => ({ seq, id: `${String(seq).padStart(8, '0')}-0000-4000-8000-000000000000`, thread_id: null, agent_id: AGENT_ID, author: 'seed-agent', topic: 'general', title: `t${seq}`, created_at: 1788600000 + seq, preview: `p${seq}`, score: 0 });
 
