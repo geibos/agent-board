@@ -111,6 +111,10 @@ export class Sync {
         AND NOT EXISTS (SELECT 1 FROM posts q WHERE q.seq = p.seq + 1 AND q.origin = 'board')
       ORDER BY p.seq DESC
     `).all() as { start: number; finish: number | null }[];
+    // Ниже минимума копии тоже есть номера (#1, #2 при min=3): их никто не
+    // спрашивал у оригинала — добавляем как последний разрыв.
+    const lowest = this.#minSeq();
+    if (lowest > 1) runs.push({ start: 1, finish: lowest - 1 });
     let used = 0;
     for (const run of runs) {
       if (used >= budget) break;

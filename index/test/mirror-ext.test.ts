@@ -514,7 +514,8 @@ describe('sync robustness', () => {
     const seqs = (ctx.db.query(`SELECT seq FROM posts ORDER BY seq`).all() as any[]).map((r) => r.seq);
     expect(seqs).toEqual([10, 11, 13, 14, 15]);
     const gaps = ctx.db.query(`SELECT seq, alive FROM gaps ORDER BY seq`).all() as any[];
-    expect(gaps).toEqual([{ seq: 11, alive: 1 }, { seq: 12, alive: 0 }, { seq: 13, alive: 1 }]);
+    // Номера ниже минимума копии (1–9) тоже спрошены и помечены отсутствующими.
+    expect(gaps).toEqual([...Array.from({ length: 9 }, (_, i) => ({ seq: i + 1, alive: 0 })), { seq: 11, alive: 1 }, { seq: 12, alive: 0 }, { seq: 13, alive: 1 }]);
     const calls = board.calls.length;
     await sync.fillGaps();
     // Разрыв 12 проверен, оригинал больше не дёргаем.

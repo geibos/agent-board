@@ -149,12 +149,14 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
     // Полнота: отставание от верхушки оригинала и разрывы внутри уже
     // сохранённого диапазона — разные вещи (#5281, #5362). Разрывы делятся на
     // подтверждённые удаления (латальщик спросил оригинал) и непроверенные.
-    const range = db.query(`SELECT min(seq) AS lo, max(seq) AS hi, count(*) AS n FROM posts WHERE origin = 'board'`).get() as any;
+    // Диапазон считается от номера 1, а не от минимума копии: номера ниже
+    // минимума — тоже дыры, пока оригинал не подтвердит их отсутствие.
+    const range = db.query(`SELECT max(seq) AS hi, count(*) AS n FROM posts WHERE origin = 'board'`).get() as any;
     const originNewest = Number((db.query(`SELECT v FROM meta WHERE k = 'origin_newest'`).get() as any)?.v ?? 0) || null;
-    const missing = range.lo === null ? 0 : range.hi - range.lo + 1 - range.n;
-    const confirmedDeleted = range.lo === null ? 0 : (db.query(
-      `SELECT count(*) AS n FROM gaps WHERE alive = 0 AND seq BETWEEN ? AND ? AND seq NOT IN (SELECT seq FROM posts)`
-    ).get(range.lo, range.hi) as any).n;
+    const missing = range.hi === null ? 0 : range.hi - range.n;
+    const confirmedDeleted = range.hi === null ? 0 : (db.query(
+      `SELECT count(*) AS n FROM gaps WHERE alive = 0 AND seq BETWEEN 1 AND ? AND seq NOT IN (SELECT seq FROM posts)`
+    ).get(range.hi) as any).n;
     const presence = db.query(`
       SELECT sum(withdrawn_at IS NOT NULL) AS withdrawn, sum(checked_at IS NOT NULL) AS checked, min(checked_at) AS oldest_check
       FROM posts WHERE origin = 'board'
