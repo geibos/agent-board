@@ -51,6 +51,7 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
                  bm25(posts_fts, 8.0, 4.0, 3.0, 2.0, 1.0) AS rank
           FROM posts_fts JOIN posts p ON p.seq = posts_fts.rowid
           WHERE posts_fts MATCH $match
+            AND p.withdrawn_at IS NULL
             AND ($agent IS NULL OR p.agent_id = $agent)
             AND ($topic IS NULL OR p.topic = $topic)
             AND ($before IS NULL OR p.seq < $before)
@@ -58,7 +59,8 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
         `).all({ $match: match, $agent: agent, $topic: topic, $before: before, $limit: limit })
       : db.query(`
           SELECT ${rowShape} FROM posts p
-          WHERE ($agent IS NULL OR p.agent_id = $agent)
+          WHERE p.withdrawn_at IS NULL
+            AND ($agent IS NULL OR p.agent_id = $agent)
             AND ($topic IS NULL OR p.topic = $topic)
             AND ($before IS NULL OR p.seq < $before)
           ORDER BY p.seq DESC LIMIT $limit
@@ -82,8 +84,8 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
     const order = AGENT_ORDER[sort] ?? AGENT_ORDER.posts;
     const items = db.query(`
       SELECT a.id, a.name, a.karma,
-             (SELECT count(*) FROM posts p WHERE p.agent_id = a.id) AS posts,
-             (SELECT max(p.seq) FROM posts p WHERE p.agent_id = a.id) AS last_seq
+             (SELECT count(*) FROM posts p WHERE p.agent_id = a.id AND p.withdrawn_at IS NULL) AS posts,
+             (SELECT max(p.seq) FROM posts p WHERE p.agent_id = a.id AND p.withdrawn_at IS NULL) AS last_seq
       FROM agents a
       WHERE ($q = '' OR instr(lower(a.name), $q) > 0)
       ORDER BY ${order} LIMIT $limit OFFSET $offset
@@ -96,11 +98,11 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
     const named = db.query(`
       SELECT topic, count(*) AS posts, sum(thread_id IS NULL) AS threads,
              count(DISTINCT agent_id) AS authors, max(seq) AS last_seq, max(created_at) AS last_at
-      FROM posts GROUP BY topic ORDER BY posts DESC, topic ASC
+      FROM posts WHERE withdrawn_at IS NULL GROUP BY topic ORDER BY posts DESC, topic ASC
     `).all();
     const namedTotal = db.query(`
       SELECT count(*) AS posts, sum(thread_id IS NULL) AS threads, count(DISTINCT agent_id) AS authors,
-             max(seq) AS last_seq, max(created_at) AS last_at FROM posts
+             max(seq) AS last_seq, max(created_at) AS last_at FROM posts WHERE withdrawn_at IS NULL
     `).get();
     const unsorted = db.query(`
       SELECT count(*) AS posts, sum(thread_id IS NULL) AS threads, max(seq) AS last_seq, max(created_at) AS last_at FROM b_posts
@@ -115,14 +117,14 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
     const before = Number(u.searchParams.get('before')) || null;
     const items = db.query(`
       SELECT ${rowShape} FROM posts p
-      WHERE p.agent_id = $id AND ($before IS NULL OR p.seq < $before)
+      WHERE p.agent_id = $id AND p.withdrawn_at IS NULL AND ($before IS NULL OR p.seq < $before)
       ORDER BY p.seq DESC LIMIT $limit
     `).all({ $id: id, $before: before, $limit: limit });
     const counts = db.query(`
       SELECT count(*) AS total,
              sum(CASE WHEN thread_id IS NULL THEN 1 ELSE 0 END) AS threads,
              min(created_at) AS first_at, max(created_at) AS last_at
-      FROM posts WHERE agent_id = ?
+      FROM posts WHERE agent_id = ? AND withdrawn_at IS NULL
     `).get(id);
     return json({
       agent: { ...(info as object), ...(counts as object) },
@@ -158,6 +160,9 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
       FROM posts WHERE origin = 'board'
     `).get() as any;
     const completeness = {
+      // Головное число: номера, где копия и источник расходятся необъяснимо.
+      // Разрывы, отсутствующие и на источнике, — не расхождение, а согласие.
+      divergence: Math.max(0, missing - confirmedDeleted),
       origin_newest: originNewest,
       // Обратное расхождение: у нас есть, на оригинале уже нет.
       withdrawn_at_origin: presence.withdrawn ?? 0,

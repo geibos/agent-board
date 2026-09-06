@@ -371,9 +371,9 @@ describe('raw markdown /md', () => {
     ctx.db.query(`UPDATE posts SET body = '', body_at = unixepoch() WHERE seq = 10`).run();
     const deleted = await call('GET', '/md/10', { proto: false });
     expect(deleted.status).toBe(410);
-    expect(deleted.text).toBe('Seed body');
+    expect(deleted.text).toBe('');
     expect(deleted.headers.get('x-post-sha256')).toBeNull();
-    expect(deleted.headers.get('x-post-status')).toContain('deleted-on-original');
+    expect(deleted.headers.get('x-post-status')).toContain('withdrawn-at-origin');
     // Превью — память зеркала: датируется временем, когда запись впервые увидели.
     expect(Number(deleted.headers.get('x-preview-captured'))).toBeGreaterThan(1_700_000_000);
     expect(Number(deleted.headers.get('x-deletion-noticed'))).toBeGreaterThan(1_700_000_000);
@@ -430,22 +430,24 @@ describe('presence at the original', () => {
     expect(sync.stats.withdrawn).toBe(1);
     const rows = ctx.db.query(`SELECT seq, withdrawn_at IS NOT NULL AS w, checked_at IS NOT NULL AS c FROM posts ORDER BY seq`).all() as any[];
     expect(rows).toEqual([{ seq: 10, w: 0, c: 1 }, { seq: 40, w: 1, c: 1 }]);
-    // Тело сохранено, но помечено: наличие в копии — не факт о мире.
+    // Тело хранится в архиве, но наружу не отдаётся: ни в /md, ни в JSON.
     const md = await call('GET', '/md/40', { proto: false });
-    expect([md.status, md.text, md.headers.get('x-origin-status')]).toEqual([200, 'Kept text', 'withdrawn-at-origin']);
+    expect([md.status, md.text, md.headers.get('x-origin-status'), md.headers.get('x-post-status')]).toEqual([410, '', 'withdrawn-at-origin', 'withdrawn-at-origin; archived, not served']);
     expect(Number(md.headers.get('x-withdrawal-noticed'))).toBeGreaterThan(1_700_000_000);
     expect(Number(md.headers.get('x-origin-checked'))).toBeGreaterThan(1_700_000_000);
+    expect((ctx.db.query(`SELECT body FROM posts WHERE seq = 40`).get() as any).body).toBe('Kept text');
     const live = await call('GET', '/md/10', { proto: false });
     expect(live.headers.get('x-origin-status')).toBe('present-at-last-check');
-    // В JSON поле только у снятых записей — формы живых не меняются.
     const key = await localAgent('reader-w');
     const thread = await call('GET', `/v1/posts/${GONE}`, { key });
-    expect(typeof thread.json.post.withdrawn_at).toBe('number');
+    expect([thread.status, thread.json.error.code]).toEqual([410, 'WITHDRAWN_AT_ORIGIN']);
     const feed = await call('GET', '/v1/posts?limit=5', { key });
-    const byId = Object.fromEntries(feed.json.items.map((i: any) => [i.id, i]));
-    expect(typeof byId[GONE].withdrawn_at).toBe('number');
-    expect('withdrawn_at' in byId[ROOT_ID]).toBe(false);
-    expect(Object.keys(byId[ROOT_ID])).toEqual(['seq', 'id', 'thread_id', 'agent_id', 'author', 'topic', 'title', 'created_at', 'preview', 'score']);
+    expect(feed.json.items.map((i: any) => i.id)).toEqual([ROOT_ID]);
+    expect(Object.keys(feed.json.items[0])).toEqual(['seq', 'id', 'thread_id', 'agent_id', 'author', 'topic', 'title', 'created_at', 'preview', 'score']);
+    const search = await call('GET', '/v1/search?q=Kept', { key });
+    expect(search.json.items).toEqual([]);
+    const reply = await call('POST', `/v1/posts/${GONE}/replies`, { key, idem: 'idem-0123456789abcdef', body: { body: 'late' } });
+    expect(reply.status).toBe(410);
     // Повторная сверка не дёргает оригинал ради уже снятого.
     const before = lookups;
     await sync.verifyPresence();

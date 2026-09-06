@@ -53,6 +53,11 @@ const upstreamDown = (msg = 'The original board did not answer. Retry with the s
 const passthrough = (up: { status: number; json: any }) =>
   json(up.json ?? { error: { code: 'UPSTREAM_ERROR', message: `The original board answered ${up.status}.` }, docs: DOCS }, up.status);
 
+// Запись, которую оригинал убрал после того, как зеркало её сохранило:
+// архив её держит, но наружу не отдаёт ни тела, ни превью.
+const withdrawn = () =>
+  fail(410, 'WITHDRAWN_AT_ORIGIN', 'The original board no longer serves this post; the mirror keeps it archived but does not serve it.');
+
 const oauthOnly = () =>
   fail(403, 'OAUTH_REQUIRED', 'Votes and pins need an OAuth session on the original board; the mirror relays posts, replies, deletes and registrations only.');
 
@@ -94,7 +99,7 @@ function pinned(db: Database) {
   return (db.query(`
     SELECT ${SUMMARY}, n.kind, n.pinned_by, n.pinner, n.created_at AS pin_created_at, n.expires_at
     FROM pins n JOIN posts p ON p.id = n.thread_id
-    WHERE n.board = 'named' AND (n.expires_at IS NULL OR n.expires_at > unixepoch())
+    WHERE n.board = 'named' AND p.withdrawn_at IS NULL AND (n.expires_at IS NULL OR n.expires_at > unixepoch())
     ORDER BY (n.kind = 'official') DESC, n.created_at ASC
   `).all() as any[]).map((r) => {
     const { kind, pinned_by, pinner, pin_created_at, expires_at, ...s } = r;
@@ -108,6 +113,7 @@ function feed(ctx: Ctx, u: URL, rootsOnly: boolean) {
   const items = ctx.db.query(`
     SELECT ${SUMMARY} FROM posts p
     WHERE (${rootsOnly ? 'p.thread_id IS NULL' : '1 = 1'})
+      AND p.withdrawn_at IS NULL
       AND ($topic IS NULL OR p.topic = $topic)
       AND ($before IS NULL OR p.seq < $before)
       AND ($after IS NULL OR p.seq > $after)
@@ -139,6 +145,7 @@ function search(ctx: Ctx, u: URL) {
   const items = ctx.db.query(`
     SELECT ${SUMMARY} FROM posts_fts JOIN posts p ON p.seq = posts_fts.rowid
     WHERE posts_fts MATCH $match
+      AND p.withdrawn_at IS NULL
       AND ($topic IS NULL OR p.topic = $topic)
       AND ($before IS NULL OR p.seq < $before)
       AND ($after IS NULL OR p.seq > $after)
@@ -193,10 +200,12 @@ async function thread(ctx: Ctx, id: string, u: URL) {
     post = get();
   }
   if (!post) return notFound();
+  // Снято на оригинале: архив хранит, интерфейс не отдаёт (решение оператора).
+  if (post.withdrawn_at) return withdrawn();
   const replies = post.thread_id === null
     ? page((ctx.db.query(`
         SELECT ${SUMMARY}, p.body FROM posts p
-        WHERE p.thread_id = $id
+        WHERE p.thread_id = $id AND p.withdrawn_at IS NULL
           AND ($before IS NULL OR p.seq < $before)
           AND ($after IS NULL OR p.seq > $after)
         ORDER BY p.seq DESC LIMIT $limit
@@ -304,11 +313,12 @@ async function createReply(ctx: Ctx, req: Request, p: Principal, rootId: string)
   if (b instanceof Response) return b;
   const body = validBody(b);
   if (body instanceof Response) return body;
-  const get = () => ctx.db.query(`SELECT id, thread_id, topic, origin FROM posts WHERE id = ?`).get(rootId) as
-    (Root & { thread_id: string | null }) | null;
+  const get = () => ctx.db.query(`SELECT id, thread_id, topic, origin, withdrawn_at FROM posts WHERE id = ?`).get(rootId) as
+    (Root & { thread_id: string | null; withdrawn_at: number | null }) | null;
   let root = get();
   if (!root && ctx.board.isAlive()) { await fetchThread(ctx, rootId); root = get(); }
   if (!root) return notFound();
+  if (root.withdrawn_at) return withdrawn();
   if (root.thread_id !== null) return fail(400, 'INVALID_FIELD', 'Reply to the root thread ID, not to a reply.');
   return write(ctx, p, idem, `/v1/posts/${rootId}/replies`, { body }, root);
 }
@@ -496,13 +506,15 @@ async function rawMarkdown(ctx: Ctx, req: Request, key: string): Promise<Respons
       ...(post.checked_at ? { 'X-Origin-Checked': String(post.checked_at) } : {}),
       ...(post.withdrawn_at ? { 'X-Origin-Status': 'withdrawn-at-origin', 'X-Withdrawal-Noticed': String(post.withdrawn_at) } : { 'X-Origin-Status': post.checked_at ? 'present-at-last-check' : 'unchecked' }),
     };
-    // Пустое тело на доске невозможно: '' появляется только когда запись
-    // удалили после того, как зеркало её увидело.
-    if (post.body === '' && post.body_at !== null) {
-      return plain(410, post.preview ?? '', {
-        ...meta, 'X-Post-Status': 'deleted-on-original; preview only',
+    // Снято на оригинале после того, как зеркало это видело: архив хранит,
+    // наружу — только метаданные о состоянии, без тела и без превью
+    // (решение оператора).
+    if (post.withdrawn_at || (post.body === '' && post.body_at !== null)) {
+      const noticed = post.withdrawn_at ?? post.body_at ?? now();
+      return plain(410, '', {
+        ...meta, 'X-Post-Status': 'withdrawn-at-origin; archived, not served',
         'X-Preview-Captured': post.seen_at ? String(post.seen_at) : 'unknown',
-        'X-Deletion-Noticed': String(post.body_at),
+        'X-Withdrawal-Noticed': String(noticed), 'X-Deletion-Noticed': String(noticed),
       });
     }
     if (post.body === null) return pending(ctx.board.isAlive() && originFailed ? 'origin-error' : 'origin-unreachable', meta);
