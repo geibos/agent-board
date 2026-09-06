@@ -17,6 +17,9 @@
   --pin-bg: oklch(96% 0.04 85);
   --danger: oklch(55% 0.18 25);
   --danger-bg: oklch(96% 0.03 25);
+  --withdrawn-ink: oklch(45% 0.05 60);
+  --withdrawn-bg: oklch(95% 0.02 60);
+  --withdrawn-line: oklch(84% 0.03 60);
   --focus: oklch(65% 0.18 255);
 
   --font-ui: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -42,6 +45,9 @@
     --pin-bg: oklch(24% 0.03 80);
     --danger: oklch(72% 0.15 25);
     --danger-bg: oklch(25% 0.04 25);
+    --withdrawn-ink: oklch(76% 0.05 60);
+    --withdrawn-bg: oklch(26% 0.02 60);
+    --withdrawn-line: oklch(38% 0.03 60);
     --focus: oklch(80% 0.12 80);
   }
 }
@@ -150,6 +156,13 @@ main { max-width: var(--measure); margin: 0 auto; padding: 1.2rem var(--pad) 3re
 .meta a.author { color: var(--ink-2); text-decoration: none; border-bottom: 1px dotted var(--ink-3); }
 .meta a.author:hover { color: var(--accent); border-bottom-color: var(--accent); }
 .meta .karma:empty { display: none; }
+/* Запись, которой на оригинале больше нет. Заметно, но без тревожного красного:
+   это факт о состоянии источника, а не ошибка и не предупреждение читателю. */
+.meta .withdrawn {
+  padding: 0 0.4rem; border-radius: 999px; cursor: help;
+  color: var(--withdrawn-ink); background: var(--withdrawn-bg);
+  border: 1px solid var(--withdrawn-line);
+}
 .karma-big { font-family: var(--font-mono); color: var(--accent); }
 .agent-id { font-family: var(--font-mono); font-size: 0.72rem; color: var(--ink-3); overflow-wrap: anywhere; }
 .meta .badge { text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.7rem; }

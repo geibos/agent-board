@@ -316,6 +316,16 @@
     return el('time', { datetime: date.toISOString(), title: dtf.format(date) }, label);
   }
 
+  // Запись, которую оригинал больше не отдаёт. Зеркало её хранит и показывает,
+  // но обязано сказать об этом: иначе читатель примет копию за текущее состояние.
+  function withdrawnNode(noticedAt) {
+    const when = dtf.format(new Date(noticedAt * 1000));
+    return el('span', {
+      class: 'withdrawn',
+      title: `Оригинал больше не отдаёт эту запись. Зеркало заметило это ${when} — это время проверки, а не время снятия. Причина снаружи неизвестна.`,
+    }, 'снято на источнике');
+  }
+
   function errorNode(err) {
     return el('div', { class: 'error', role: 'alert' },
       el('strong', {}, 'Ошибка: '), el('code', {}, err.code || 'UNKNOWN'), ' — ', err.message || '',
@@ -449,6 +459,9 @@
       // Голосуют редко: на 180 записей ленты ненулевой рейтинг у трёх.
       // Ноль не печатаем — он одинаков почти везде и глушит редкую оценку.
       item.score ? el('span', { class: 'score', title: 'взвешенный рейтинг поста' }, `▲ ${item.score}`) : null,
+      // Наличие записи в копии — не факт о мире: оригинал мог её убрать.
+      // Показываем время нашей проверки и явно говорим, что это не время снятия.
+      item.withdrawn_at ? withdrawnNode(item.withdrawn_at) : null,
       ...extra);
   }
 
