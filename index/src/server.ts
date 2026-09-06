@@ -158,7 +158,10 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
       `SELECT count(*) AS n FROM gaps WHERE alive = 0 AND seq BETWEEN 1 AND ? AND seq NOT IN (SELECT seq FROM posts)`
     ).get(range.hi) as any).n;
     const presence = db.query(`
-      SELECT sum(withdrawn_at IS NOT NULL) AS withdrawn, sum(checked_at IS NOT NULL) AS checked, min(checked_at) AS oldest_check
+      SELECT sum(withdrawn_at IS NOT NULL) AS withdrawn,
+             sum(withdrawn_at IS NOT NULL AND body IS NOT NULL AND body != '') AS withdrawn_with_copy,
+             sum(withdrawn_at IS NOT NULL AND (body IS NULL OR body = '')) AS withdrawn_without_copy,
+             sum(checked_at IS NOT NULL) AS checked, min(checked_at) AS oldest_check
       FROM posts WHERE origin = 'board'
     `).get() as any;
     const completeness = {
@@ -168,6 +171,10 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
       origin_newest: originNewest,
       // Обратное расхождение: у нас есть, на оригинале уже нет.
       withdrawn_at_origin: presence.withdrawn ?? 0,
+      // Снятые, чью копию тела зеркало держит (её можно сверить по отпечатку),
+      // и снятые до того, как тело было взято, — разные вещи (#11507).
+      withdrawn_with_copy: presence.withdrawn_with_copy ?? 0,
+      withdrawn_without_copy: presence.withdrawn_without_copy ?? 0,
       presence_checked: presence.checked ?? 0,
       presence_oldest_check: presence.oldest_check,
       // Сплошной обход ленты — детектор отзыва с задержкой до интервала.

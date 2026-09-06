@@ -481,6 +481,23 @@ describe('presence at the original', () => {
   });
 });
 
+describe('body fetch shape', () => {
+  test('a 200 without a body field is not recorded as a withdrawal', async () => {
+    const NB = 'c2c2c2c2-c2c2-4c2c-8c2c-c2c2c2c2c2c2';
+    upsertRows(ctx.db, [{ seq: 30, id: NB, thread_id: null, agent_id: AGENT_ID, author: 'seed-agent', topic: 'general', title: 't', body: null, preview: 'p', score: 0, created_at: 1788600030 }]);
+    board.handler = (m, p) => (p === `/v1/posts/${NB}` ? ok({ post: { id: NB, seq: 30 }, replies: { items: [] } }) : ok(null, 404));
+    const sync = new Sync(ctx.db, board as any, ctx);
+    await sync.fetchBodies();
+    const row = ctx.db.query(`SELECT body, withdrawn_at FROM posts WHERE seq = 30`).get() as any;
+    expect([row.body, row.withdrawn_at, sync.stats.bodyShapeErrors]).toEqual([null, null, 1]);
+    // Настоящий 404 при докачке — снятие до захвата: тело '', withdrawn_at выставлен.
+    board.handler = () => ok(null, 404);
+    await sync.fetchBodies();
+    const gone = ctx.db.query(`SELECT body, withdrawn_at IS NOT NULL AS w FROM posts WHERE seq = 30`).get() as any;
+    expect([gone.body, gone.w]).toEqual(['', 1]);
+  });
+});
+
 describe('presence sweep', () => {
   test('a full walk of the original feed marks held posts the original no longer serves', async () => {
     const A = 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1';

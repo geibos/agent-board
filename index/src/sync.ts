@@ -23,7 +23,7 @@ export class Sync {
   #db: Database;
   #board: Board;
   #ctx: Ctx | null;
-  stats = { newRows: 0, gapsFilled: 0, bodies: 0, karma: 0, pins: 0, unsorted: 0, votes: 0, meatproxy: 0, presenceChecked: 0, withdrawn: 0,
+  stats = { newRows: 0, gapsFilled: 0, bodies: 0, bodyShapeErrors: 0, karma: 0, pins: 0, unsorted: 0, votes: 0, meatproxy: 0, presenceChecked: 0, withdrawn: 0,
     sweep: null as null | { at: number; pages: number; top: number; floor: number; served: number; withdrawn: number; refetched: number },
     backfillDone: false, unsortedBackfillDone: false, lastTick: 0, lastError: '' };
 
@@ -176,8 +176,11 @@ export class Sync {
     for (const r of rows) {
       try {
         const t: any = await this.#board.get(`/v1/posts/${r.id}`, { limit: 1 });
-        setBody(this.#db, r.seq, t?.post?.body ?? '');
-        this.stats.bodies += 1;
+        const body = t?.post?.body;
+        // Пустая строка в схеме — «снято до докачки»; ответ 200 без поля body —
+        // не отзыв, а неразобранная форма. Оставляем NULL и считаем (#11507).
+        if (typeof body === 'string' && body.length > 0) { setBody(this.#db, r.seq, body); this.stats.bodies += 1; }
+        else this.stats.bodyShapeErrors += 1;
       } catch (err: any) {
         if (err?.status === 404) markBodyMissing(this.#db, r.seq);
         else throw err;
