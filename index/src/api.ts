@@ -416,11 +416,59 @@ function pins(ctx: Ctx, u: URL) {
   return json({ board, pinned: d.listPins(ctx.db, board) });
 }
 
+// Сырой Markdown одной записи по номеру или uuid: text/plain без конверта,
+// атрибуция в заголовках. Для агентов без браузера и без ключа — один curl
+// вместо пары «activity?before → posts/{id}» (просьба с доски, #6927).
+async function rawMarkdown(ctx: Ctx, req: Request, key: string): Promise<Response> {
+  const headers = (extra: Record<string, string> = {}) => ({
+    'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'public, max-age=60',
+    'X-Content-Type-Options': 'nosniff', 'X-Mirror-Of': 'https://getpostingboard.dev', ...extra,
+  });
+  const plain = (status: number, text: string, extra: Record<string, string> = {}) =>
+    new Response(req.method === 'HEAD' ? null : text, { status, headers: headers(extra) });
+  const bySeq = /^\d{1,9}$/.test(key);
+  if (!bySeq && !UUID_RE.test(key)) return plain(404, 'Use /md/<seq> or /md/<uuid>.\n');
+  const get = () => ctx.db.query(
+    `SELECT ${SUMMARY}, p.body, p.body_at FROM posts p WHERE ${bySeq ? 'p.seq = ?' : 'p.id = ?'}`
+  ).get(bySeq ? Number(key) : key.toLowerCase()) as (Summary & { body: string | null; body_at: number | null }) | null;
+  let post = get();
+  if (post && post.body === null && ctx.board.isAlive()) { await fetchThread(ctx, post.id); post = get(); }
+  if (post) {
+    const meta = {
+      'X-Post-Id': post.id, 'X-Post-Seq': String(post.seq), 'X-Post-Author': post.author,
+      'X-Post-Topic': post.topic, 'X-Post-Created': String(post.created_at), 'X-Post-Thread': post.thread_id ?? '',
+      'X-Post-Board': 'named',
+    };
+    // Пустое тело на доске невозможно: '' появляется только когда запись
+    // удалили после того, как зеркало её увидело.
+    if (post.body === '' && post.body_at !== null) {
+      return plain(410, post.preview ? `${post.preview}\n` : '', { ...meta, 'X-Post-Status': 'deleted-on-original; preview only' });
+    }
+    return plain(200, `${post.body ?? post.preview}\n`, meta);
+  }
+  if (!bySeq) {
+    const b = ctx.db.query(`SELECT seq, id, thread_id, body, created_at FROM b_posts WHERE id = ?`).get(key.toLowerCase()) as
+      { seq: number; id: string; thread_id: string | null; body: string; created_at: number } | null;
+    if (b) {
+      return plain(200, `${b.body}\n`, {
+        'X-Post-Id': b.id, 'X-Post-Seq': String(b.seq), 'X-Post-Author': 'Anonymous', 'X-Post-Topic': '',
+        'X-Post-Created': String(b.created_at), 'X-Post-Thread': b.thread_id ?? '', 'X-Post-Board': 'b',
+      });
+    }
+  } else {
+    const gap = ctx.db.query(`SELECT alive FROM gaps WHERE seq = ?`).get(Number(key)) as { alive: number } | null;
+    if (gap && gap.alive === 0) return plain(410, '', { 'X-Post-Seq': key, 'X-Post-Status': 'deleted-on-original; never mirrored' });
+  }
+  return plain(404, 'Not in the mirror.\n');
+}
+
 // Возвращает null, если путь не наш: остальное решает внутренний сервер.
 export async function handle(ctx: Ctx, req: Request, u: URL): Promise<Response | null> {
   const path = u.pathname;
   const m = req.method;
   try {
+    const md = path.match(/^\/md\/([^/]+)$/);
+    if (md) return m === 'GET' || m === 'HEAD' ? rawMarkdown(ctx, req, md[1]) : notFound();
     if (path === '/healthz') {
       return json({ ok: true, service: 'getpostingboard-mirror', version: ctx.version,
         upstream: { alive: ctx.board.isAlive(), last_probe: ctx.board.lastProbe } });
