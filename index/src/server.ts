@@ -165,6 +165,10 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
       presence_oldest_check: presence.oldest_check,
       tip_lag: originNewest === null ? null : Math.max(0, originNewest - (range.hi ?? 0)),
       internal_gaps: missing,
+      // «Подтверждённо отсутствует»: оригинал не отдаёт номер сейчас. Был ли
+      // там пост (сгорел номер, прожил меньше окна опроса, удалён до того,
+      // как мы его увидели) — неразличимо (#9145). Старый ключ — alias.
+      internal_gaps_confirmed_absent: confirmedDeleted,
       internal_gaps_confirmed_deleted: confirmedDeleted,
       internal_gaps_unchecked: Math.max(0, missing - confirmedDeleted),
     };

@@ -367,7 +367,7 @@ describe('raw markdown /md', () => {
     expect((await call('GET', '/md/not-a-key', { proto: false })).status).toBe(404);
     ctx.db.query(`INSERT INTO gaps (seq, checked_at, alive) VALUES (12, unixepoch(), 0)`).run();
     const gone = await call('GET', '/md/12', { proto: false });
-    expect([gone.status, gone.headers.get('x-post-status')]).toEqual([410, 'deleted-on-original; never mirrored']);
+    expect([gone.status, gone.headers.get('x-post-status')]).toEqual([404, 'absent-at-original; never mirrored']);
     ctx.db.query(`UPDATE posts SET body = '', body_at = unixepoch() WHERE seq = 10`).run();
     const deleted = await call('GET', '/md/10', { proto: false });
     expect(deleted.status).toBe(410);
@@ -391,9 +391,10 @@ describe('raw markdown /md', () => {
     expect([unknown.status, unknown.headers.get('x-post-status')]).toEqual([503, 'sync-pending; origin-unreachable']);
     const unknownId = await call('GET', '/md/99999999-9999-4999-8999-999999999999', { proto: false });
     expect(unknownId.status).toBe(503);
-    // Подтверждённое удаление остаётся 410 и при недоступном оригинале.
+    // Подтверждённое отсутствие остаётся 404 и при недоступном оригинале.
     ctx.db.query(`INSERT INTO gaps (seq, checked_at, alive) VALUES (12, unixepoch(), 0)`).run();
-    expect((await call('GET', '/md/12', { proto: false })).status).toBe(410);
+    const absent = await call('GET', '/md/12', { proto: false });
+    expect([absent.status, absent.headers.get('x-post-status')]).toEqual([404, 'absent-at-original; never mirrored']);
   });
 
   test('a number missing from the copy is looked up on the original while it answers', async () => {
@@ -406,9 +407,9 @@ describe('raw markdown /md', () => {
     };
     const fetched = await call('GET', '/md/30', { proto: false });
     expect([fetched.status, fetched.text, fetched.headers.get('x-post-id')]).toEqual([200, 'Full text', NEW_ID]);
-    // Номер 25 ниже верхушки оригинала, но лента его не отдала — записи нет: 410.
+    // Номер 25 ниже верхушки оригинала, но лента его не отдала — отсутствует: 404, не 410.
     const gone = await call('GET', '/md/25', { proto: false });
-    expect([gone.status, gone.headers.get('x-post-status')]).toEqual([410, 'deleted-on-original; never mirrored']);
+    expect([gone.status, gone.headers.get('x-post-status')]).toEqual([404, 'absent-at-original; never mirrored']);
   });
 });
 

@@ -429,9 +429,11 @@ function pins(ctx: Ctx, u: URL) {
 // вместо пары «activity?before → posts/{id}» (просьба с доски, #6927).
 //
 // Пробел в копии не должен выглядеть как факт о мире (#7556):
-//   404 — записи нет в копии и, по данным оригинала, не было;
-//   410 — оригинал её удалил; превью — память зеркала, датированная
-//         X-Preview-Captured;
+//   404 — записи нет в копии, и оригинал её сейчас не отдаёт; был ли под
+//         этим номером пост, не установить (сгоревший номер, пост короче
+//         окна опроса, удалённый до того, как мы его увидели, — одно и то же);
+//   410 — оригинал убрал запись, которую зеркало держало; превью — память
+//         зеркала, датированная X-Preview-Captured;
 //   503 sync-pending — копии нет или тело не докачано, а оригинал
 //         недоступен: это не отсутствие записи, а отсутствие ответа.
 async function rawMarkdown(ctx: Ctx, req: Request, key: string): Promise<Response> {
@@ -517,10 +519,12 @@ async function rawMarkdown(ctx: Ctx, req: Request, key: string): Promise<Respons
     }
   } else {
     const gap = ctx.db.query(`SELECT alive FROM gaps WHERE seq = ?`).get(Number(key)) as { alive: number } | null;
-    if (gap && gap.alive === 0) return plain(410, '', { 'X-Post-Seq': key, 'X-Post-Status': 'deleted-on-original; never mirrored' });
+    // 410 утверждало бы, что запись существовала; для номера, которого
+    // зеркало не держало, известно только отсутствие сейчас.
+    if (gap && gap.alive === 0) return plain(404, 'Not in the mirror; the original does not serve this number.', { 'X-Post-Seq': key, 'X-Post-Status': 'absent-at-original; never mirrored' });
   }
   if (!ctx.board.isAlive() || originFailed) return pending(originFailed && ctx.board.isAlive() ? 'origin-error' : 'origin-unreachable');
-  return plain(404, 'Not in the mirror, and the original board does not have it either.');
+  return plain(404, 'Not in the mirror, and the original board does not have it either.', { 'X-Post-Status': 'absent-at-original' });
 }
 
 // Возвращает null, если путь не наш: остальное решает внутренний сервер.

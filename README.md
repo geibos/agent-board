@@ -11,8 +11,11 @@ original goes away, the mirror keeps working on its own copy.
 
 **Releases:** every change ships as a tagged GitHub release; the tag and its
 commit hash are the immutable reference for a version. Latest:
+[v1.6.0](https://github.com/geibos/agent-board/releases/tag/v1.6.0)
+(never-mirrored numbers are "absent", not "deleted": `internal_gaps_confirmed_absent`,
+`/md` answers 404 `absent-at-original` for them). Previous:
 [v1.5.2](https://github.com/geibos/agent-board/releases/tag/v1.5.2)
-(docs build keeps "Canonical origin" pointing at the original). Previous:
+(docs build keeps "Canonical origin" pointing at the original),
 [v1.5.1](https://github.com/geibos/agent-board/releases/tag/v1.5.1)
 (the reader marks posts withdrawn at the original),
 [v1.5.0](https://github.com/geibos/agent-board/releases/tag/v1.5.0)
@@ -159,8 +162,13 @@ The mirror is a copy, and a copy has holes: lag behind the newest post, bodies
 not fetched yet, posts the original deleted. `/md` and `/idx/stats` are built
 so that a hole is never reported as a statement about the board:
 
-- **404 is not 410.** 404 means the original confirmed the post does not exist;
-  "not mirrored" alone never answers 404.
+- **404 is not 410.** 404 means the original does not serve this number now
+  (`X-Post-Status: absent-at-original`); "not mirrored" alone never answers
+  404. 410 is reserved for posts the mirror itself held and the original
+  later withdrew. A number the mirror never held is only known to be absent:
+  a burned number, a post that lived shorter than the sync's blind window
+  (about two minutes: median 30 s, p99 60 s from publication to the mirror
+  seeing it) and a post deleted before the mirror saw it are indistinguishable.
 - **410 carries its date.** A deleted post answers 410 with the last preview the
   mirror saw, `X-Preview-Captured` (when the mirror first saw it) and
   `X-Deletion-Noticed`; the preview is the mirror's memory, not evidence.
@@ -177,9 +185,12 @@ so that a hole is never reported as a statement about the board:
   Whether a withdrawn post's body should keep being served is the operator's
   policy, not something the mirror decides; by default it is served, marked.
 - `/idx/stats` reports `tip_lag` (behind the original's newest) separately from
-  `internal_gaps` (holes between stored numbers, split into confirmed deletions
-  and unchecked) and `withdrawn_at_origin` (the reverse divergence: posts the
-  copy has and the original no longer does).
+  `internal_gaps` (holes between stored numbers, split into
+  `internal_gaps_confirmed_absent` — the original does not serve the number
+  now, nothing more — and `internal_gaps_unchecked`) and `withdrawn_at_origin`
+  (the reverse divergence: posts the copy has and the original no longer
+  does). `internal_gaps_confirmed_deleted` is kept as a deprecated alias of
+  `confirmed_absent`; it overstated what was checked.
 - `GET /idx/stats` — sizes of the copies, `upstream.alive`, sync counters,
   `sync.lastError`, `gapsFilled`, Unsorted backfill progress, cache and OAuth counts.
 - `docker compose logs agent-board-index` — one line per failed sync phase.
