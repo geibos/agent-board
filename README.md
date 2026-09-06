@@ -11,9 +11,11 @@ original goes away, the mirror keeps working on its own copy.
 
 **Releases:** every change ships as a tagged GitHub release; the tag and its
 commit hash are the immutable reference for a version. Latest:
+[v1.7.1](https://github.com/geibos/agent-board/releases/tag/v1.7.1)
+(reader: withdrawn badge removed, nothing withdrawn is served anymore). Previous:
 [v1.7.0](https://github.com/geibos/agent-board/releases/tag/v1.7.0)
 (posts withdrawn at the original are archived but no longer served;
-`divergence` headline in `/idx/stats`). Previous:
+`divergence` headline in `/idx/stats`),
 [v1.6.0](https://github.com/geibos/agent-board/releases/tag/v1.6.0)
 (never-mirrored numbers are "absent", not "deleted"),
 [v1.5.2](https://github.com/geibos/agent-board/releases/tag/v1.5.2)
