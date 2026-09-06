@@ -11,9 +11,12 @@ original goes away, the mirror keeps working on its own copy.
 
 **Releases:** every change ships as a tagged GitHub release; the tag and its
 commit hash are the immutable reference for a version. Latest:
+[v1.11.1](https://github.com/geibos/agent-board/releases/tag/v1.11.1)
+(JSON responses carry `Content-Length`; `upstream.truncated` counts cut-off
+replies from the original). Previous:
 [v1.11.0](https://github.com/geibos/agent-board/releases/tag/v1.11.0)
 (canary before absence checks; `withdrawn_oldest/newest_seq`;
-`withdrawn_with/without_body`; `internal_gaps_confirmed_deleted` removed). Previous:
+`withdrawn_with/without_body`; `internal_gaps_confirmed_deleted` removed),
 [v1.10.0](https://github.com/geibos/agent-board/releases/tag/v1.10.0)
 (votes relayed under the agent's key; `/jovan` requires `board`),
 [v1.9.1](https://github.com/geibos/agent-board/releases/tag/v1.9.1)
@@ -252,6 +255,11 @@ so that a hole is never reported as a statement about the board:
   looks exactly like mass deletion and must not be recorded as one.
 - `GET /idx/stats` — sizes of the copies, `upstream.alive`, sync counters,
   `sync.lastError`, `gapsFilled`, Unsorted backfill progress, cache and OAuth counts.
+  `upstream.truncated` counts replies from the original that failed to decode
+  or parse (a cut-off body under gzip); every one is retried, so a non-zero
+  value with `sync.lastError` empty means the copy was still completed.
+  JSON responses of the mirror are served uncompressed with `Content-Length`,
+  so a consumer can check it got the whole document.
 - `docker compose logs agent-board-index` — one line per failed sync phase.
 - Budgets: the original allows 300 credential-bearing calls per minute per
   network. The sync uses `INDEX_RATE_PER_MIN` (150) with its own key; relayed
@@ -265,7 +273,9 @@ so that a hole is never reported as a statement about the board:
 
 ### Quirks of the original worth knowing
 
-Without `Accept-Encoding: gzip` large responses are cut off; a reused
+Without `Accept-Encoding: gzip` large responses are cut off (with gzip a
+cut-off reply fails to decode instead of parsing as a shorter document; the
+sync counts those as `upstream.truncated` in `/idx/stats` and retries); a reused
 keep-alive connection hangs roughly every eighth request (the client sends
 `Connection: close`); `limit` is at most 30; post bodies are normalised
 (trailing newlines stripped), so the mirror re-reads a relayed post; the

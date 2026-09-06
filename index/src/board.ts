@@ -46,7 +46,16 @@ export class Board {
   #deadUntil = 0;
   #alive = true;
   lastProbe = 0;
-  stats = { requests: 0, throttled: 0, errors: 0, forwarded: 0 };
+  // truncated — обрезанные ответы оригинала: ошибка распаковки gzip или
+  // неразобранный JSON. Под нагрузкой доска недодаёт тела с кодом 200
+  // (#19163); сжатый транспорт превращает обрыв в исключение, и его надо
+  // считать, а не выводить «ноль» из отсутствия жалоб.
+  stats = { requests: 0, throttled: 0, errors: 0, forwarded: 0, truncated: 0 };
+  static readonly TRUNCATION_RE = /decompress|zlib|gzip|inflate|unexpected end|premature|incomplete|truncat/i;
+  #noteFailure(err: unknown) {
+    this.stats.errors += 1;
+    if (Board.TRUNCATION_RE.test(String((err as Error)?.message ?? err))) this.stats.truncated += 1;
+  }
 
   constructor(key: string, ua: string, ratePerMinute: number, burst = 5, forwardPerMinute = 80) {
     this.#key = key;
@@ -107,10 +116,15 @@ export class Board {
       try {
         res = await fetch(url, { headers: this.#headers(this.#key), signal: AbortSignal.timeout(12_000) });
         // Тело читаем здесь же: таймаут прерывает и чтение, а снаружи блока
-        // такая ошибка уходила бы мимо повторной попытки.
-        if (res.ok) payload = (await res.json()) as T;
+        // такая ошибка уходила бы мимо повторной попытки. Неразобранный JSON
+        // на 200 — почти всегда обрыв тела; считаем как обрезку и повторяем.
+        if (res.ok) {
+          const text = await res.text();
+          try { payload = JSON.parse(text) as T; }
+          catch { throw new Error(`truncated or malformed JSON (${text.length} chars) on ${url.pathname}`); }
+        }
       } catch (err) {
-        this.stats.errors += 1;
+        this.#noteFailure(err);
         if (attempt >= 4) { this.markDead(); throw err; }
         await Bun.sleep(2 ** attempt * 250);
         continue;
@@ -151,9 +165,13 @@ export class Board {
         const h = this.#headers();
         delete h['X-Agent-Protocol'];
         res = await fetch(url, { headers: h, signal: AbortSignal.timeout(12_000) });
-        if (res.ok) payload = (await res.json()) as T;
+        if (res.ok) {
+          const text = await res.text();
+          try { payload = JSON.parse(text) as T; }
+          catch { throw new Error(`truncated or malformed JSON (${text.length} chars) on ${url.pathname}`); }
+        }
       } catch (err) {
-        this.stats.errors += 1;
+        this.#noteFailure(err);
         if (attempt >= 3) { this.markDead(); throw err; }
         await Bun.sleep(2 ** attempt * 250);
         continue;
@@ -196,7 +214,7 @@ export class Board {
       res = await fetch(`${BASE}${pathWithQuery}`, { method, headers: h, body, signal: AbortSignal.timeout(30_000), redirect: 'manual' });
       bytes = new Uint8Array(await res.arrayBuffer());
     } catch (err) {
-      this.stats.errors += 1;
+      this.#noteFailure(err);
       this.markDead();
       throw err;
     }
@@ -231,7 +249,7 @@ export class Board {
       res = await fetch(url, init);
       text = await res.text();
     } catch (err) {
-      this.stats.errors += 1;
+      this.#noteFailure(err);
       this.markDead();
       throw err;
     }

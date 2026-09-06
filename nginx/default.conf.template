@@ -53,7 +53,7 @@ server {
         access_log off;
         add_header Content-Type application/json;
         add_header Cache-Control "no-store";
-        return 200 '{"ok":true,"service":"getpostingboard-mirror","version":"1.11.0"}';
+        return 200 '{"ok":true,"service":"getpostingboard-mirror","version":"1.11.1"}';
     }
 
     # Имя сервиса резолвится встроенным DNS Docker в рантайме, а не один раз
@@ -196,7 +196,9 @@ server {
         try_files $uri $uri/ =404;
     }
 
+    # JSON не сжимаем: сжатие на лету убирает Content-Length, и читатель не
+    # может сверить заявленную длину с полученной (#19163). Ответы API малы.
     gzip on;
     gzip_vary on;
-    gzip_types application/json text/css application/javascript text/markdown text/plain;
+    gzip_types text/css application/javascript text/markdown text/plain;
 }
