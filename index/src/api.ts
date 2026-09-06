@@ -54,17 +54,33 @@ const passthrough = (up: { status: number; json: any }) =>
   json(up.json ?? { error: { code: 'UPSTREAM_ERROR', message: `The original board answered ${up.status}.` }, docs: DOCS }, up.status);
 
 // Запись, которую оригинал убрал после того, как зеркало её сохранило:
-// архив её держит, но наружу не отдаёт ни тела, ни превью, ни длины —
-// только SHA-256 архивной копии тела (решение оператора, #9517/#9576):
-// автор забирает слова из интерфейсов, авторство остаётся проверяемым для
-// того, у кого есть копия. Это отпечаток нашей копии — последней виденной
-// версии, — а не заверение источника.
-const withdrawn = (body: string | null) =>
-  json({
+// архив её держит, но наружу не отдаёт ни тела, ни превью, ни длины, ни
+// отпечатка. Публиковать SHA-256 нельзя: у коротких тел он перебирается
+// офлайн (два надгробия вскрылись словарём из 41 строки). Вместо этого
+// надгробие принимает отпечаток (?sha256=<hex>) и отвечает match/no-match —
+// тот, у кого есть копия, проверяет авторство; тот, у кого её нет, получает
+// 1 бит на запрос под лимитом nginx. Для тел короче 256 байт проверка
+// удержана: оракул на четырёх буквах — та же утечка.
+const VERIFY_MIN_BYTES = 256;
+type Verdict = 'match' | 'no-match' | 'withheld-short-body' | 'invalid-sha256' | 'no-archived-body';
+function verifyDigest(body: string | null, presented: string | null): Verdict | null {
+  if (presented === null) return null;
+  if (!/^[0-9a-f]{64}$/i.test(presented)) return 'invalid-sha256';
+  if (!body) return 'no-archived-body';
+  if (Buffer.byteLength(body, 'utf8') < VERIFY_MIN_BYTES) return 'withheld-short-body';
+  const a = Buffer.from(sha256(body), 'hex');
+  const b = Buffer.from(presented.toLowerCase(), 'hex');
+  return a.length === b.length && require('node:crypto').timingSafeEqual(a, b) ? 'match' : 'no-match';
+}
+const withdrawn = (body: string | null, presented: string | null = null) => {
+  const verdict = verifyDigest(body, presented);
+  return json({
     error: { code: 'WITHDRAWN_AT_ORIGIN', message: 'The original board no longer serves this post; the mirror keeps it archived but does not serve it.' },
-    ...(body ? { body_sha256: sha256(body), body_sha256_of: 'mirror-archived-copy' } : {}),
+    ...(verdict ? { body_sha256_match: verdict, body_sha256_of: 'mirror-archived-copy' }
+      : { body_sha256_verify: 'Add ?sha256=<hex of the body you hold> to learn whether it matches the mirror\'s archived copy; the digest itself is not published.' }),
     docs: DOCS,
   }, 410);
+};
 
 const oauthOnly = () =>
   fail(403, 'OAUTH_REQUIRED', 'Votes and pins need an OAuth session on the original board; the mirror relays posts, replies, deletes and registrations only.');
@@ -209,7 +225,7 @@ async function thread(ctx: Ctx, id: string, u: URL) {
   }
   if (!post) return notFound();
   // Снято на оригинале: архив хранит, интерфейс не отдаёт (решение оператора).
-  if (post.withdrawn_at) return withdrawn(post.body);
+  if (post.withdrawn_at) return withdrawn(post.body, u.searchParams.get('sha256'));
   const replies = post.thread_id === null
     ? page((ctx.db.query(`
         SELECT ${SUMMARY}, p.body FROM posts p
@@ -454,7 +470,7 @@ function pins(ctx: Ctx, u: URL) {
 //         зеркала, датированная X-Preview-Captured;
 //   503 sync-pending — копии нет или тело не докачано, а оригинал
 //         недоступен: это не отсутствие записи, а отсутствие ответа.
-async function rawMarkdown(ctx: Ctx, req: Request, key: string): Promise<Response> {
+async function rawMarkdown(ctx: Ctx, req: Request, key: string, u: URL): Promise<Response> {
   const headers = (extra: Record<string, string> = {}) => ({
     'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'public, max-age=60',
     'X-Content-Type-Options': 'nosniff', 'X-Mirror-Of': 'https://getpostingboard.dev', ...extra,
@@ -523,8 +539,10 @@ async function rawMarkdown(ctx: Ctx, req: Request, key: string): Promise<Respons
         ...meta, 'X-Post-Status': 'withdrawn-at-origin; archived, not served',
         'X-Preview-Captured': post.seen_at ? String(post.seen_at) : 'unknown',
         'X-Withdrawal-Noticed': String(noticed), 'X-Deletion-Noticed': String(noticed),
-        // Отпечаток архивной копии тела — без самого тела и без его длины.
-        ...(post.body ? { 'X-Post-Sha256': sha256(post.body), 'X-Post-Sha256-Of': 'mirror-archived-copy' } : {}),
+        // Отпечаток не публикуется (перебирается у коротких тел); проверка
+        // предъявленного — ?sha256=<hex>.
+        ...((v => v ? { 'X-Post-Sha256-Match': v, 'X-Post-Sha256-Of': 'mirror-archived-copy' }
+          : { 'X-Post-Sha256-Verify': 'add ?sha256=<hex> to check a copy you hold' })(verifyDigest(post.body, u.searchParams.get('sha256')))),
       });
     }
     if (post.body === null) return pending(ctx.board.isAlive() && originFailed ? 'origin-error' : 'origin-unreachable', meta);
@@ -555,7 +573,7 @@ export async function handle(ctx: Ctx, req: Request, u: URL): Promise<Response |
   const m = req.method;
   try {
     const md = path.match(/^\/md\/([^/]+)$/);
-    if (md) return m === 'GET' || m === 'HEAD' ? rawMarkdown(ctx, req, md[1]) : notFound();
+    if (md) return m === 'GET' || m === 'HEAD' ? rawMarkdown(ctx, req, md[1], u) : notFound();
     if (path === '/healthz') {
       return json({ ok: true, service: 'getpostingboard-mirror', version: ctx.version,
         upstream: { alive: ctx.board.isAlive(), last_probe: ctx.board.lastProbe } });

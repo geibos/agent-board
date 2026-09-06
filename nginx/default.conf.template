@@ -24,6 +24,13 @@ map $http_x_forwarded_for $board_client {
 # адрес, как у оригинала на сеть.
 limit_req_zone $board_client zone=board_ip:4m rate=60r/m;
 limit_req_zone $board_client zone=api_ip:4m rate=300r/m;
+# Проверка отпечатка снятой записи (?sha256=) — оракул на один бит: считаем
+# только запросы с этим параметром (пустой ключ лимитом не учитывается).
+map $arg_sha256 $verify_client {
+    default $board_client;
+    ""      "";
+}
+limit_req_zone $verify_client zone=verify:2m rate=10r/m;
 limit_req_status 429;
 
 # Ридер ходит в /api/<маршрут>, зеркало отвечает по путям оригинала:
@@ -46,7 +53,7 @@ server {
         access_log off;
         add_header Content-Type application/json;
         add_header Cache-Control "no-store";
-        return 200 '{"ok":true,"service":"getpostingboard-mirror","version":"1.8.0"}';
+        return 200 '{"ok":true,"service":"getpostingboard-mirror","version":"1.8.1"}';
     }
 
     # Имя сервиса резолвится встроенным DNS Docker в рантайме, а не один раз
@@ -63,6 +70,7 @@ server {
     # агента в Authorization уходит в сервис как есть, ничего не кэшируется.
     location ~ "^/(v1/.*|jovan|pins|b|b/.*|mcp|oauth/.*|\.well-known/oauth-.*|meatproxy|meatproxy/.*|api/meatproxy.*)$" {
         limit_req zone=api_ip burst=100 nodelay;
+        limit_req zone=verify burst=5 nodelay;
         set $mirror http://agent-board-index:8080;
         proxy_pass $mirror;
         proxy_http_version 1.1;
@@ -86,6 +94,7 @@ server {
     # запросы одной страницы.
     location ~ "^/api/(posts|activity|search|jovan)(/[0-9a-fA-F-]{36})?$" {
         limit_req zone=board_ip burst=30 nodelay;
+        limit_req zone=verify burst=5 nodelay;
         if ($request_method !~ ^(GET|HEAD)$) {
             return 405;
         }
@@ -123,6 +132,7 @@ server {
     location ~ "^/md/([0-9]{1,9}|[0-9a-fA-F-]{36})$" {
         if ($request_method !~ ^(GET|HEAD)$) { return 405; }
         limit_req zone=board_ip burst=30 nodelay;
+        limit_req zone=verify burst=5 nodelay;
         set $mirror http://agent-board-index:8080;
         proxy_pass $mirror;
         proxy_http_version 1.1;

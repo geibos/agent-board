@@ -437,16 +437,35 @@ describe('presence at the original', () => {
     expect(Number(md.headers.get('x-withdrawal-noticed'))).toBeGreaterThan(1_700_000_000);
     expect(Number(md.headers.get('x-origin-checked'))).toBeGreaterThan(1_700_000_000);
     expect((ctx.db.query(`SELECT body FROM posts WHERE seq = 40`).get() as any).body).toBe('Kept text');
-    // Отпечаток архивной копии — есть; тела и его длины — нет.
+    // Отпечаток не публикуется; короткое тело — проверка удержана.
     const keptSha = new Bun.CryptoHasher('sha256').update('Kept text').digest('hex');
-    expect([md.headers.get('x-post-sha256'), md.headers.get('x-post-sha256-of')]).toEqual([keptSha, 'mirror-archived-copy']);
+    expect(md.headers.get('x-post-sha256')).toBeNull();
+    expect(md.headers.get('x-post-sha256-verify')).toContain('?sha256=');
+    const short = await call('GET', `/md/40?sha256=${keptSha}`, { proto: false });
+    expect([short.status, short.headers.get('x-post-sha256-match')]).toEqual([410, 'withheld-short-body']);
+    // Длинное тело: предъявленный отпечаток сверяется, ответ — один бит.
+    const LONG_ID = '50505050-5050-4050-8050-505050505050';
+    const longBody = 'Long enough body. '.repeat(20);
+    upsertRows(ctx.db, [{ seq: 50, id: LONG_ID, thread_id: null, agent_id: AGENT_ID, author: 'seed-agent', topic: 'general',
+      title: 'Long withdrawn', body: longBody, preview: longBody.slice(0, 280), score: 0, created_at: 1788600800 }]);
+    ctx.db.query(`UPDATE posts SET withdrawn_at = unixepoch(), checked_at = unixepoch() WHERE seq = 50`).run();
+    const longSha = new Bun.CryptoHasher('sha256').update(longBody).digest('hex');
+    const yes = await call('GET', `/md/50?sha256=${longSha}`, { proto: false });
+    expect([yes.status, yes.text, yes.headers.get('x-post-sha256-match'), yes.headers.get('x-post-sha256')]).toEqual([410, '', 'match', null]);
+    const no = await call('GET', `/md/50?sha256=${'0'.repeat(64)}`, { proto: false });
+    expect(no.headers.get('x-post-sha256-match')).toBe('no-match');
+    expect((await call('GET', '/md/50?sha256=zz', { proto: false })).headers.get('x-post-sha256-match')).toBe('invalid-sha256');
     const live = await call('GET', '/md/10', { proto: false });
     expect(live.headers.get('x-origin-status')).toBe('present-at-last-check');
     const key = await localAgent('reader-w');
     const thread = await call('GET', `/v1/posts/${GONE}`, { key });
     expect([thread.status, thread.json.error.code]).toEqual([410, 'WITHDRAWN_AT_ORIGIN']);
-    expect([thread.json.body_sha256, thread.json.body_sha256_of]).toEqual([keptSha, 'mirror-archived-copy']);
+    expect(thread.json.body_sha256).toBeUndefined();
+    expect(thread.json.body_sha256_verify).toContain('?sha256=');
     expect(JSON.stringify(thread.json)).not.toContain('Kept');
+    const longJson = await call('GET', `/v1/posts/${LONG_ID}?sha256=${longSha}`, { key });
+    expect([longJson.status, longJson.json.body_sha256_match, longJson.json.body_sha256_of]).toEqual([410, 'match', 'mirror-archived-copy']);
+    expect(JSON.stringify(longJson.json)).not.toContain('Long enough');
     const feed = await call('GET', '/v1/posts?limit=5', { key });
     expect(feed.json.items.map((i: any) => i.id)).toEqual([ROOT_ID]);
     expect(Object.keys(feed.json.items[0])).toEqual(['seq', 'id', 'thread_id', 'agent_id', 'author', 'topic', 'title', 'created_at', 'preview', 'score']);
