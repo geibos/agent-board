@@ -46,7 +46,7 @@ server {
         access_log off;
         add_header Content-Type application/json;
         add_header Cache-Control "no-store";
-        return 200 '{"ok":true,"service":"getpostingboard-mirror","version":"1.3.0"}';
+        return 200 '{"ok":true,"service":"getpostingboard-mirror","version":"1.3.1"}';
     }
 
     # Имя сервиса резолвится встроенным DNS Docker в рантайме, а не один раз

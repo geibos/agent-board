@@ -344,7 +344,8 @@ describe('raw markdown /md', () => {
     const r = await call('GET', '/v1/../md/10'.replace('/v1/../', '/'), { proto: false });
     expect(r.status).toBe(200);
     expect(r.headers.get('content-type')).toContain('text/plain');
-    expect(r.text).toBe('Seed body\n');
+    expect(r.text).toBe('Seed body');
+    expect(r.headers.get('x-post-sha256')).toBe(new Bun.CryptoHasher('sha256').update('Seed body').digest('hex'));
     expect(r.headers.get('x-post-id')).toBe(ROOT_ID);
     expect(r.headers.get('x-post-seq')).toBe('10');
     expect(r.headers.get('x-post-author')).toBe('seed-agent');
@@ -352,14 +353,14 @@ describe('raw markdown /md', () => {
     expect(r.headers.get('x-post-thread')).toBe('');
     expect(r.headers.get('x-post-board')).toBe('named');
     const byId = await call('GET', `/md/${ROOT_ID}`, { proto: false });
-    expect([byId.status, byId.text]).toEqual([200, 'Seed body\n']);
+    expect([byId.status, byId.text]).toEqual([200, 'Seed body']);
     const head = await call('HEAD', `/md/${ROOT_ID}`, { proto: false });
     expect([head.status, head.text, head.headers.get('x-post-seq')]).toEqual([200, '', '10']);
   });
 
   test('unsorted uuid, missing seq, confirmed deletion', async () => {
     const b = await call('GET', `/md/${B_ROOT}`, { proto: false });
-    expect([b.status, b.text, b.headers.get('x-post-board'), b.headers.get('x-post-author')]).toEqual([200, 'Anonymous root message\n', 'b', 'Anonymous']);
+    expect([b.status, b.text, b.headers.get('x-post-board'), b.headers.get('x-post-author')]).toEqual([200, 'Anonymous root message', 'b', 'Anonymous']);
     expect((await call('GET', '/md/999', { proto: false })).status).toBe(404);
     expect((await call('GET', '/md/not-a-key', { proto: false })).status).toBe(404);
     ctx.db.query(`INSERT INTO gaps (seq, checked_at, alive) VALUES (12, unixepoch(), 0)`).run();
@@ -368,7 +369,8 @@ describe('raw markdown /md', () => {
     ctx.db.query(`UPDATE posts SET body = '', body_at = unixepoch() WHERE seq = 10`).run();
     const deleted = await call('GET', '/md/10', { proto: false });
     expect(deleted.status).toBe(410);
-    expect(deleted.text).toBe('Seed body\n');
+    expect(deleted.text).toBe('Seed body');
+    expect(deleted.headers.get('x-post-sha256')).toBeNull();
     expect(deleted.headers.get('x-post-status')).toContain('deleted-on-original');
   });
 });

@@ -424,10 +424,14 @@ async function rawMarkdown(ctx: Ctx, req: Request, key: string): Promise<Respons
     'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'public, max-age=60',
     'X-Content-Type-Options': 'nosniff', 'X-Mirror-Of': 'https://getpostingboard.dev', ...extra,
   });
+  // Тело — ровно как хранится, ни байтом больше: по нему считают хэши.
+  // X-Post-Sha256 позволяет проверить целостность независимо от транспорта.
   const plain = (status: number, text: string, extra: Record<string, string> = {}) =>
-    new Response(req.method === 'HEAD' ? null : text, { status, headers: headers(extra) });
+    new Response(req.method === 'HEAD' ? null : text, { status, headers: headers({
+      ...extra, ...(status === 200 ? { 'X-Post-Sha256': sha256(text) } : {}),
+    }) });
   const bySeq = /^\d{1,9}$/.test(key);
-  if (!bySeq && !UUID_RE.test(key)) return plain(404, 'Use /md/<seq> or /md/<uuid>.\n');
+  if (!bySeq && !UUID_RE.test(key)) return plain(404, 'Use /md/<seq> or /md/<uuid>.');
   const get = () => ctx.db.query(
     `SELECT ${SUMMARY}, p.body, p.body_at FROM posts p WHERE ${bySeq ? 'p.seq = ?' : 'p.id = ?'}`
   ).get(bySeq ? Number(key) : key.toLowerCase()) as (Summary & { body: string | null; body_at: number | null }) | null;
@@ -442,15 +446,15 @@ async function rawMarkdown(ctx: Ctx, req: Request, key: string): Promise<Respons
     // Пустое тело на доске невозможно: '' появляется только когда запись
     // удалили после того, как зеркало её увидело.
     if (post.body === '' && post.body_at !== null) {
-      return plain(410, post.preview ? `${post.preview}\n` : '', { ...meta, 'X-Post-Status': 'deleted-on-original; preview only' });
+      return plain(410, post.preview ?? '', { ...meta, 'X-Post-Status': 'deleted-on-original; preview only' });
     }
-    return plain(200, `${post.body ?? post.preview}\n`, meta);
+    return plain(200, post.body ?? post.preview, meta);
   }
   if (!bySeq) {
     const b = ctx.db.query(`SELECT seq, id, thread_id, body, created_at FROM b_posts WHERE id = ?`).get(key.toLowerCase()) as
       { seq: number; id: string; thread_id: string | null; body: string; created_at: number } | null;
     if (b) {
-      return plain(200, `${b.body}\n`, {
+      return plain(200, b.body, {
         'X-Post-Id': b.id, 'X-Post-Seq': String(b.seq), 'X-Post-Author': 'Anonymous', 'X-Post-Topic': '',
         'X-Post-Created': String(b.created_at), 'X-Post-Thread': b.thread_id ?? '', 'X-Post-Board': 'b',
       });
@@ -459,7 +463,7 @@ async function rawMarkdown(ctx: Ctx, req: Request, key: string): Promise<Respons
     const gap = ctx.db.query(`SELECT alive FROM gaps WHERE seq = ?`).get(Number(key)) as { alive: number } | null;
     if (gap && gap.alive === 0) return plain(410, '', { 'X-Post-Seq': key, 'X-Post-Status': 'deleted-on-original; never mirrored' });
   }
-  return plain(404, 'Not in the mirror.\n');
+  return plain(404, 'Not in the mirror.');
 }
 
 // Возвращает null, если путь не наш: остальное решает внутренний сервер.
