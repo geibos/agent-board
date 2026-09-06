@@ -54,9 +54,17 @@ const passthrough = (up: { status: number; json: any }) =>
   json(up.json ?? { error: { code: 'UPSTREAM_ERROR', message: `The original board answered ${up.status}.` }, docs: DOCS }, up.status);
 
 // Запись, которую оригинал убрал после того, как зеркало её сохранило:
-// архив её держит, но наружу не отдаёт ни тела, ни превью.
-const withdrawn = () =>
-  fail(410, 'WITHDRAWN_AT_ORIGIN', 'The original board no longer serves this post; the mirror keeps it archived but does not serve it.');
+// архив её держит, но наружу не отдаёт ни тела, ни превью, ни длины —
+// только SHA-256 архивной копии тела (решение оператора, #9517/#9576):
+// автор забирает слова из интерфейсов, авторство остаётся проверяемым для
+// того, у кого есть копия. Это отпечаток нашей копии — последней виденной
+// версии, — а не заверение источника.
+const withdrawn = (body: string | null) =>
+  json({
+    error: { code: 'WITHDRAWN_AT_ORIGIN', message: 'The original board no longer serves this post; the mirror keeps it archived but does not serve it.' },
+    ...(body ? { body_sha256: sha256(body), body_sha256_of: 'mirror-archived-copy' } : {}),
+    docs: DOCS,
+  }, 410);
 
 const oauthOnly = () =>
   fail(403, 'OAUTH_REQUIRED', 'Votes and pins need an OAuth session on the original board; the mirror relays posts, replies, deletes and registrations only.');
@@ -201,7 +209,7 @@ async function thread(ctx: Ctx, id: string, u: URL) {
   }
   if (!post) return notFound();
   // Снято на оригинале: архив хранит, интерфейс не отдаёт (решение оператора).
-  if (post.withdrawn_at) return withdrawn();
+  if (post.withdrawn_at) return withdrawn(post.body);
   const replies = post.thread_id === null
     ? page((ctx.db.query(`
         SELECT ${SUMMARY}, p.body FROM posts p
@@ -318,7 +326,7 @@ async function createReply(ctx: Ctx, req: Request, p: Principal, rootId: string)
   let root = get();
   if (!root && ctx.board.isAlive()) { await fetchThread(ctx, rootId); root = get(); }
   if (!root) return notFound();
-  if (root.withdrawn_at) return withdrawn();
+  if (root.withdrawn_at) return withdrawn(null);
   if (root.thread_id !== null) return fail(400, 'INVALID_FIELD', 'Reply to the root thread ID, not to a reply.');
   return write(ctx, p, idem, `/v1/posts/${rootId}/replies`, { body }, root);
 }
@@ -455,7 +463,7 @@ async function rawMarkdown(ctx: Ctx, req: Request, key: string): Promise<Respons
   // X-Post-Sha256 позволяет проверить целостность независимо от транспорта.
   const plain = (status: number, text: string, extra: Record<string, string> = {}) =>
     new Response(req.method === 'HEAD' ? null : text, { status, headers: headers({
-      ...extra, ...(status === 200 ? { 'X-Post-Sha256': sha256(text) } : {}),
+      ...extra, ...(status === 200 ? { 'X-Post-Sha256': sha256(text), 'X-Post-Sha256-Of': 'mirror-archived-copy' } : {}),
     }) });
   const pending = (why: 'origin-unreachable' | 'origin-error', extra: Record<string, string> = {}) =>
     plain(503, 'The mirror has no verified copy of this post yet and the original board did not answer; retry later.',
@@ -515,6 +523,8 @@ async function rawMarkdown(ctx: Ctx, req: Request, key: string): Promise<Respons
         ...meta, 'X-Post-Status': 'withdrawn-at-origin; archived, not served',
         'X-Preview-Captured': post.seen_at ? String(post.seen_at) : 'unknown',
         'X-Withdrawal-Noticed': String(noticed), 'X-Deletion-Noticed': String(noticed),
+        // Отпечаток архивной копии тела — без самого тела и без его длины.
+        ...(post.body ? { 'X-Post-Sha256': sha256(post.body), 'X-Post-Sha256-Of': 'mirror-archived-copy' } : {}),
       });
     }
     if (post.body === null) return pending(ctx.board.isAlive() && originFailed ? 'origin-error' : 'origin-unreachable', meta);

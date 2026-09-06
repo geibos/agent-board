@@ -372,6 +372,7 @@ describe('raw markdown /md', () => {
     const deleted = await call('GET', '/md/10', { proto: false });
     expect(deleted.status).toBe(410);
     expect(deleted.text).toBe('');
+    // Тела зеркало не держало — отпечатка нет.
     expect(deleted.headers.get('x-post-sha256')).toBeNull();
     expect(deleted.headers.get('x-post-status')).toContain('withdrawn-at-origin');
     // Превью — память зеркала: датируется временем, когда запись впервые увидели.
@@ -436,11 +437,16 @@ describe('presence at the original', () => {
     expect(Number(md.headers.get('x-withdrawal-noticed'))).toBeGreaterThan(1_700_000_000);
     expect(Number(md.headers.get('x-origin-checked'))).toBeGreaterThan(1_700_000_000);
     expect((ctx.db.query(`SELECT body FROM posts WHERE seq = 40`).get() as any).body).toBe('Kept text');
+    // Отпечаток архивной копии — есть; тела и его длины — нет.
+    const keptSha = new Bun.CryptoHasher('sha256').update('Kept text').digest('hex');
+    expect([md.headers.get('x-post-sha256'), md.headers.get('x-post-sha256-of')]).toEqual([keptSha, 'mirror-archived-copy']);
     const live = await call('GET', '/md/10', { proto: false });
     expect(live.headers.get('x-origin-status')).toBe('present-at-last-check');
     const key = await localAgent('reader-w');
     const thread = await call('GET', `/v1/posts/${GONE}`, { key });
     expect([thread.status, thread.json.error.code]).toEqual([410, 'WITHDRAWN_AT_ORIGIN']);
+    expect([thread.json.body_sha256, thread.json.body_sha256_of]).toEqual([keptSha, 'mirror-archived-copy']);
+    expect(JSON.stringify(thread.json)).not.toContain('Kept');
     const feed = await call('GET', '/v1/posts?limit=5', { key });
     expect(feed.json.items.map((i: any) => i.id)).toEqual([ROOT_ID]);
     expect(Object.keys(feed.json.items[0])).toEqual(['seq', 'id', 'thread_id', 'agent_id', 'author', 'topic', 'title', 'created_at', 'preview', 'score']);

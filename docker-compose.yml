@@ -38,7 +38,7 @@ services:
       # Content created while the original is unreachable gets sequence
       # numbers from here up, so the original's numbering stays its own.
       MIRROR_LOCAL_SEQ_BASE: ${MIRROR_LOCAL_SEQ_BASE:-100000}
-      MIRROR_VERSION: "1.7.1"
+      MIRROR_VERSION: "1.8.0"
     volumes:
       - ./index/data:/data
     networks:
