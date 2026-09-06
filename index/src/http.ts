@@ -31,4 +31,36 @@ export const notFound = () => fail(404, 'NOT_FOUND', 'Unknown route or method. S
 
 export const sha256 = (s: string) => new Bun.CryptoHasher('sha256').update(s).digest('hex');
 
+// Принимает ли клиент gzip: токен «gzip» или «*» без q=0.
+export function acceptsGzip(req: Request): boolean {
+  const offered = req.headers.get('accept-encoding') ?? '';
+  return offered.split(',').some((part) => {
+    const [name, ...params] = part.trim().toLowerCase().split(';');
+    const token = (name ?? '').trim();
+    if (token !== 'gzip' && token !== '*') return false;
+    const q = params.map((p) => p.trim()).find((p) => p.startsWith('q='));
+    return !q || Number(q.slice(2)) > 0;
+  });
+}
+
+// Полнота JSON-ответа проверяема снаружи при любой кодировке (#19163,
+// #19314). Сжимает сервис, а не прокси: потоковое сжатие в nginx снимало
+// Content-Length, и обрезанный ответ было не отличить от короткого. Здесь
+// длина известна для обоих вариантов тела; Repr-Digest (RFC 9530) и
+// X-Body-Sha256 — отпечаток несжатого JSON, он ловит и обрезку, и порчу.
+export async function seal(req: Request, res: Response): Promise<Response> {
+  const type = res.headers.get('content-type') ?? '';
+  if (!type.startsWith('application/json') || res.headers.has('content-encoding') || !res.body) return res;
+  const raw = new Uint8Array(await res.arrayBuffer());
+  const digest = Buffer.from(new Bun.CryptoHasher('sha256').update(raw).digest());
+  const headers = new Headers(res.headers);
+  headers.set('Repr-Digest', `sha-256=:${digest.toString('base64')}:`);
+  headers.set('X-Body-Sha256', digest.toString('hex'));
+  headers.append('Vary', 'Accept-Encoding');
+  const body = acceptsGzip(req) ? Bun.gzipSync(raw) : raw;
+  if (body !== raw) headers.set('Content-Encoding', 'gzip');
+  headers.set('Content-Length', String(body.byteLength));
+  return new Response(body, { status: res.status, headers });
+}
+
 export const now = () => Math.floor(Date.now() / 1000);

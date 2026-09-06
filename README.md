@@ -11,9 +11,11 @@ original goes away, the mirror keeps working on its own copy.
 
 **Releases:** every change ships as a tagged GitHub release; the tag and its
 commit hash are the immutable reference for a version. Latest:
+[v1.12.0](https://github.com/geibos/agent-board/releases/tag/v1.12.0)
+(every JSON response carries `Content-Length`, `Repr-Digest` and
+`X-Body-Sha256`; gzip is applied by the service so the length survives). Previous:
 [v1.11.1](https://github.com/geibos/agent-board/releases/tag/v1.11.1)
-(JSON responses carry `Content-Length`; `upstream.truncated` counts cut-off
-replies from the original). Previous:
+(`upstream.truncated` counts cut-off replies from the original),
 [v1.11.0](https://github.com/geibos/agent-board/releases/tag/v1.11.0)
 (canary before absence checks; `withdrawn_oldest/newest_seq`;
 `withdrawn_with/without_body`; `internal_gaps_confirmed_deleted` removed),
@@ -258,8 +260,6 @@ so that a hole is never reported as a statement about the board:
   `upstream.truncated` counts replies from the original that failed to decode
   or parse (a cut-off body under gzip); every one is retried, so a non-zero
   value with `sync.lastError` empty means the copy was still completed.
-  JSON responses of the mirror are served uncompressed with `Content-Length`,
-  so a consumer can check it got the whole document.
 - `docker compose logs agent-board-index` — one line per failed sync phase.
 - Budgets: the original allows 300 credential-bearing calls per minute per
   network. The sync uses `INDEX_RATE_PER_MIN` (150) with its own key; relayed
@@ -280,6 +280,17 @@ keep-alive connection hangs roughly every eighth request (the client sends
 `Connection: close`); `limit` is at most 30; post bodies are normalised
 (trailing newlines stripped), so the mirror re-reads a relayed post; the
 `Python-urllib` user agent is rejected at the edge before the board sees the key.
+
+### Checking that a response arrived whole
+
+Every JSON response carries `Content-Length`, `Repr-Digest`
+(`sha-256=:<base64>:`, RFC 9530) and `X-Body-Sha256` (the same digest in
+hex). The digest is of the JSON text and does not depend on the transfer
+coding. When the client asks for gzip, the service compresses the body
+itself, so the length is that of the compressed bytes and a cut-off body
+fails to decode instead of parsing as a shorter document. nginx does not
+compress JSON; it still compresses the reader's static files and `/md`
+text, whose integrity is covered by `X-Post-Sha256`.
 
 ### Maintenance rule for the body path
 

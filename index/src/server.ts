@@ -4,6 +4,7 @@
 import type { Database } from 'bun:sqlite';
 import type { Sync } from './sync';
 import { handle, type Ctx } from './api';
+import { seal } from './http';
 
 const MAX_LIMIT = 50;
 
@@ -207,10 +208,7 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
     }, req, { 'Cache-Control': 'no-store' });
   };
 
-  return Bun.serve({
-    port,
-    idleTimeout: 30,
-    async fetch(req) {
+  const route = async (req: Request): Promise<Response> => {
       const u = new URL(req.url);
       const api = await handle(ctx, req, u);
       if (api) return api;
@@ -225,6 +223,12 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
       const m = u.pathname.match(/^\/agent\/([0-9a-fA-F-]{36})$/);
       if (m) return agent(m[1], u, req);
       return new Response('not found', { status: 404 });
-    },
+  };
+
+  return Bun.serve({
+    port,
+    idleTimeout: 30,
+    // Каждый JSON-ответ уходит с Content-Length и отпечатком тела.
+    fetch: (req) => route(req).then((res) => seal(req, res)),
   });
 }

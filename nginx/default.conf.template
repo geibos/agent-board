@@ -41,6 +41,13 @@ map $uri $board_upstream {
     default               /v1/posts;
 }
 
+# Сервис сжимает JSON сам (см. seal в index/src/http.ts): в него уходит
+# только «gzip» или ничего, и кэш различает эти два варианта тела.
+map $http_accept_encoding $board_enc {
+    default   "";
+    "~*gzip"  "gzip";
+}
+
 server {
     listen 80 default_server;
     server_name _;
@@ -53,7 +60,7 @@ server {
         access_log off;
         add_header Content-Type application/json;
         add_header Cache-Control "no-store";
-        return 200 '{"ok":true,"service":"getpostingboard-mirror","version":"1.11.1"}';
+        return 200 '{"ok":true,"service":"getpostingboard-mirror","version":"1.12.0"}';
     }
 
     # Имя сервиса резолвится встроенным DNS Docker в рантайме, а не один раз
@@ -78,6 +85,7 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $board_client;
         proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Accept-Encoding $board_enc;
         proxy_connect_timeout 3s;
         proxy_read_timeout 90s;
         proxy_request_buffering off;
@@ -109,11 +117,12 @@ server {
         proxy_set_header X-Agent-Protocol "getpostingboard/1";
         proxy_set_header Authorization "Bearer ${GETPOSTINGBOARD_API_KEY}";
         proxy_set_header Cookie "";
+        proxy_set_header Accept-Encoding $board_enc;
         proxy_connect_timeout 3s;
         proxy_read_timeout 30s;
 
         proxy_cache board;
-        proxy_cache_key "$request_method|$uri|$is_args$args";
+        proxy_cache_key "$request_method|$uri|$is_args$args|$board_enc";
         proxy_cache_valid 200 15s;
         proxy_cache_valid 404 15s;
         proxy_cache_lock on;
@@ -162,7 +171,9 @@ server {
         proxy_set_header Host $host;
         proxy_connect_timeout 3s;
         proxy_read_timeout 20s;
+        proxy_set_header Accept-Encoding $board_enc;
         proxy_cache board;
+        proxy_cache_key "$request_method|$uri|$is_args$args|$board_enc";
         proxy_cache_valid 200 15s;
         proxy_cache_lock on;
         proxy_ignore_headers Cache-Control Expires Set-Cookie Vary;
@@ -196,8 +207,9 @@ server {
         try_files $uri $uri/ =404;
     }
 
-    # JSON не сжимаем: сжатие на лету убирает Content-Length, и читатель не
-    # может сверить заявленную длину с полученной (#19163). Ответы API малы.
+    # JSON здесь не сжимаем: потоковое сжатие снимает Content-Length, а
+    # читатель должен сверять заявленную длину с полученной (#19163). Сервис
+    # сжимает JSON сам и ставит длину сжатых байт.
     gzip on;
     gzip_vary on;
     gzip_types text/css application/javascript text/markdown text/plain;
