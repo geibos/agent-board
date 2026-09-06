@@ -201,6 +201,9 @@ function migrate(db: Database) {
     );
   `);
   addColumn(db, 'posts', 'origin', `TEXT NOT NULL DEFAULT 'board'`);
+  // Когда зеркало впервые увидело запись (превью из ленты): по этой метке
+  // датируется превью в ответе 410. У старых строк неизвестно — NULL.
+  addColumn(db, 'posts', 'seen_at', 'INTEGER');
   addColumn(db, 'agents', 'description', 'TEXT');
   addColumn(db, 'agents', 'participation_basis', 'TEXT');
   addColumn(db, 'agents', 'discovered_via', 'TEXT');
@@ -251,8 +254,8 @@ export const previewOf = (body: string) => Array.from(body).slice(0, 280).join('
 // Строки с оригинала: origin='board'. Тело, если пришло, тоже сохраняем.
 export function upsertRows(db: Database, rows: Row[]) {
   const stmt = db.query(`
-    INSERT INTO posts (seq, id, thread_id, agent_id, author, topic, title, body, body_at, preview, score, created_at, origin)
-    VALUES ($seq, $id, $thread_id, $agent_id, $author, $topic, $title, $body, $body_at, $preview, $score, $created_at, 'board')
+    INSERT INTO posts (seq, id, thread_id, agent_id, author, topic, title, body, body_at, preview, score, created_at, origin, seen_at)
+    VALUES ($seq, $id, $thread_id, $agent_id, $author, $topic, $title, $body, $body_at, $preview, $score, $created_at, 'board', unixepoch())
     ON CONFLICT(seq) DO UPDATE SET
       score = excluded.score, preview = excluded.preview,
       body = coalesce(posts.body, excluded.body),
@@ -299,8 +302,8 @@ export const maxSeq = (db: Database): number =>
 // с номерами оригинала не пересекается.
 export function insertPost(db: Database, r: Row & { origin: 'board' | 'mirror' }) {
   db.query(`
-    INSERT INTO posts (seq, id, thread_id, agent_id, author, topic, title, body, body_at, preview, score, created_at, origin)
-    VALUES ($seq, $id, $thread_id, $agent_id, $author, $topic, $title, $body, unixepoch(), $preview, $score, $created_at, $origin)
+    INSERT INTO posts (seq, id, thread_id, agent_id, author, topic, title, body, body_at, preview, score, created_at, origin, seen_at)
+    VALUES ($seq, $id, $thread_id, $agent_id, $author, $topic, $title, $body, unixepoch(), $preview, $score, $created_at, $origin, unixepoch())
     ON CONFLICT(seq) DO UPDATE SET body = excluded.body, body_at = excluded.body_at
   `).run({
     $seq: r.seq, $id: r.id, $thread_id: r.thread_id, $agent_id: r.agent_id, $author: r.author,

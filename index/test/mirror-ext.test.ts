@@ -361,6 +361,8 @@ describe('raw markdown /md', () => {
   test('unsorted uuid, missing seq, confirmed deletion', async () => {
     const b = await call('GET', `/md/${B_ROOT}`, { proto: false });
     expect([b.status, b.text, b.headers.get('x-post-board'), b.headers.get('x-post-author')]).toEqual([200, 'Anonymous root message', 'b', 'Anonymous']);
+    // 404 только когда оригинал подтверждает: его верхушка ниже запрошенного номера.
+    board.handler = (m, p) => (p === '/v1/activity' ? ok({ items: [], next_before: null, newest_cursor: 500 }) : ok(null, 404));
     expect((await call('GET', '/md/999', { proto: false })).status).toBe(404);
     expect((await call('GET', '/md/not-a-key', { proto: false })).status).toBe(404);
     ctx.db.query(`INSERT INTO gaps (seq, checked_at, alive) VALUES (12, unixepoch(), 0)`).run();
@@ -372,6 +374,41 @@ describe('raw markdown /md', () => {
     expect(deleted.text).toBe('Seed body');
     expect(deleted.headers.get('x-post-sha256')).toBeNull();
     expect(deleted.headers.get('x-post-status')).toContain('deleted-on-original');
+    // Превью — память зеркала: датируется временем, когда запись впервые увидели.
+    expect(Number(deleted.headers.get('x-preview-captured'))).toBeGreaterThan(1_700_000_000);
+    expect(Number(deleted.headers.get('x-deletion-noticed'))).toBeGreaterThan(1_700_000_000);
+  });
+
+  test('no verified copy while the original is unreachable is 503 sync-pending, not 404', async () => {
+    upsertRows(ctx.db, [{ seq: 20, id: '20202020-2020-4020-8020-202020202020', thread_id: null, agent_id: AGENT_ID, author: 'seed-agent',
+      topic: 'general', title: 'No body yet', body: null, preview: 'Only a preview', score: 0, created_at: 1788600500 }]);
+    board.alive = false;
+    const pending = await call('GET', '/md/20', { proto: false });
+    expect([pending.status, pending.headers.get('x-post-status'), pending.headers.get('retry-after')]).toEqual([503, 'sync-pending; origin-unreachable', '60']);
+    expect(pending.headers.get('x-post-seq')).toBe('20');
+    expect(pending.headers.get('x-post-sha256')).toBeNull();
+    const unknown = await call('GET', '/md/777', { proto: false });
+    expect([unknown.status, unknown.headers.get('x-post-status')]).toEqual([503, 'sync-pending; origin-unreachable']);
+    const unknownId = await call('GET', '/md/99999999-9999-4999-8999-999999999999', { proto: false });
+    expect(unknownId.status).toBe(503);
+    // Подтверждённое удаление остаётся 410 и при недоступном оригинале.
+    ctx.db.query(`INSERT INTO gaps (seq, checked_at, alive) VALUES (12, unixepoch(), 0)`).run();
+    expect((await call('GET', '/md/12', { proto: false })).status).toBe(410);
+  });
+
+  test('a number missing from the copy is looked up on the original while it answers', async () => {
+    const NEW_ID = '30303030-3030-4030-8030-303030303030';
+    board.handler = (m, p, o) => {
+      if (p === '/v1/activity' && o.params?.before === 31) return ok({ items: [{ seq: 30, id: NEW_ID, thread_id: null, agent_id: AGENT_ID, author: 'seed-agent', topic: 'meta', title: 'Fetched by number', created_at: 1788600600, preview: 'Full text', score: 0 }], next_before: 30, newest_cursor: 30 });
+      if (p === '/v1/activity' && o.params?.before === 26) return ok({ items: [{ seq: 24, id: '24242424-2424-4424-8424-242424242424', thread_id: null, agent_id: AGENT_ID, author: 'seed-agent', topic: 'meta', title: 'older', created_at: 1788600550, preview: 'x', score: 0 }], next_before: 24, newest_cursor: 30 });
+      if (p === `/v1/posts/${NEW_ID}`) return ok({ post: { seq: 30, id: NEW_ID, thread_id: null, agent_id: AGENT_ID, author: 'seed-agent', topic: 'meta', title: 'Fetched by number', created_at: 1788600600, body: 'Full text', score: 0 }, replies: { items: [], next_before: null } });
+      return ok(null, 404);
+    };
+    const fetched = await call('GET', '/md/30', { proto: false });
+    expect([fetched.status, fetched.text, fetched.headers.get('x-post-id')]).toEqual([200, 'Full text', NEW_ID]);
+    // Номер 25 ниже верхушки оригинала, но лента его не отдала — записи нет: 410.
+    const gone = await call('GET', '/md/25', { proto: false });
+    expect([gone.status, gone.headers.get('x-post-status')]).toEqual([410, 'deleted-on-original; never mirrored']);
   });
 });
 

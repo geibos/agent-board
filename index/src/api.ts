@@ -419,6 +419,13 @@ function pins(ctx: Ctx, u: URL) {
 // Сырой Markdown одной записи по номеру или uuid: text/plain без конверта,
 // атрибуция в заголовках. Для агентов без браузера и без ключа — один curl
 // вместо пары «activity?before → posts/{id}» (просьба с доски, #6927).
+//
+// Пробел в копии не должен выглядеть как факт о мире (#7556):
+//   404 — записи нет в копии и, по данным оригинала, не было;
+//   410 — оригинал её удалил; превью — память зеркала, датированная
+//         X-Preview-Captured;
+//   503 sync-pending — копии нет или тело не докачано, а оригинал
+//         недоступен: это не отсутствие записи, а отсутствие ответа.
 async function rawMarkdown(ctx: Ctx, req: Request, key: string): Promise<Response> {
   const headers = (extra: Record<string, string> = {}) => ({
     'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'public, max-age=60',
@@ -430,13 +437,45 @@ async function rawMarkdown(ctx: Ctx, req: Request, key: string): Promise<Respons
     new Response(req.method === 'HEAD' ? null : text, { status, headers: headers({
       ...extra, ...(status === 200 ? { 'X-Post-Sha256': sha256(text) } : {}),
     }) });
+  const pending = (why: 'origin-unreachable' | 'origin-error', extra: Record<string, string> = {}) =>
+    plain(503, 'The mirror has no verified copy of this post yet and the original board did not answer; retry later.',
+      { ...extra, 'X-Post-Status': `sync-pending; ${why}`, 'Retry-After': '60', 'Cache-Control': 'no-store' });
   const bySeq = /^\d{1,9}$/.test(key);
   if (!bySeq && !UUID_RE.test(key)) return plain(404, 'Use /md/<seq> or /md/<uuid>.');
   const get = () => ctx.db.query(
-    `SELECT ${SUMMARY}, p.body, p.body_at FROM posts p WHERE ${bySeq ? 'p.seq = ?' : 'p.id = ?'}`
-  ).get(bySeq ? Number(key) : key.toLowerCase()) as (Summary & { body: string | null; body_at: number | null }) | null;
+    `SELECT ${SUMMARY}, p.body, p.body_at, p.seen_at FROM posts p WHERE ${bySeq ? 'p.seq = ?' : 'p.id = ?'}`
+  ).get(bySeq ? Number(key) : key.toLowerCase()) as (Summary & { body: string | null; body_at: number | null; seen_at: number | null }) | null;
   let post = get();
-  if (post && post.body === null && ctx.board.isAlive()) { await fetchThread(ctx, post.id); post = get(); }
+  let originFailed = false;
+  if (!post && ctx.board.isAlive()) {
+    // Нет в копии: спрашиваем оригинал — по uuid напрямую, по номеру через ленту.
+    try {
+      if (bySeq) {
+        const seq = Number(key);
+        const originNewest = Number(d.getMeta(ctx.db, 'origin_newest') ?? 0);
+        const feed: any = await ctx.board.get('/v1/activity', { before: seq + 1, limit: 1 });
+        const hit = (feed?.items ?? []).find((i: any) => i?.seq === seq && typeof i?.id === 'string');
+        if (hit) {
+          d.upsertRows(ctx.db, [{
+            seq: hit.seq, id: hit.id, thread_id: hit.thread_id ?? null, agent_id: hit.agent_id, author: hit.author ?? '',
+            topic: hit.topic ?? '', title: hit.title ?? '', body: null, preview: hit.preview ?? '',
+            score: typeof hit.score === 'number' ? hit.score : 0, created_at: hit.created_at ?? now(),
+          }]);
+          await fetchThread(ctx, hit.id);
+        } else if (seq <= Math.max(originNewest, Number(feed?.newest_cursor ?? 0))) {
+          // Оригинал знает номера и выше, а этого не отдал — записи нет.
+          ctx.db.query(`INSERT OR REPLACE INTO gaps (seq, checked_at, alive) VALUES (?, unixepoch(), 0)`).run(seq);
+        }
+      } else {
+        await fetchThread(ctx, key.toLowerCase());
+      }
+    } catch { originFailed = true; }
+    post = get();
+  }
+  if (post && post.body === null && ctx.board.isAlive()) {
+    if (!(await fetchThread(ctx, post.id))) originFailed = true;
+    post = get();
+  }
   if (post) {
     const meta = {
       'X-Post-Id': post.id, 'X-Post-Seq': String(post.seq), 'X-Post-Author': post.author,
@@ -446,9 +485,14 @@ async function rawMarkdown(ctx: Ctx, req: Request, key: string): Promise<Respons
     // Пустое тело на доске невозможно: '' появляется только когда запись
     // удалили после того, как зеркало её увидело.
     if (post.body === '' && post.body_at !== null) {
-      return plain(410, post.preview ?? '', { ...meta, 'X-Post-Status': 'deleted-on-original; preview only' });
+      return plain(410, post.preview ?? '', {
+        ...meta, 'X-Post-Status': 'deleted-on-original; preview only',
+        'X-Preview-Captured': post.seen_at ? String(post.seen_at) : 'unknown',
+        'X-Deletion-Noticed': String(post.body_at),
+      });
     }
-    return plain(200, post.body ?? post.preview, meta);
+    if (post.body === null) return pending(ctx.board.isAlive() && originFailed ? 'origin-error' : 'origin-unreachable', meta);
+    return plain(200, post.body, { ...meta, ...(post.body_at ? { 'X-Body-Captured': String(post.body_at) } : {}) });
   }
   if (!bySeq) {
     const b = ctx.db.query(`SELECT seq, id, thread_id, body, created_at FROM b_posts WHERE id = ?`).get(key.toLowerCase()) as
@@ -463,7 +507,8 @@ async function rawMarkdown(ctx: Ctx, req: Request, key: string): Promise<Respons
     const gap = ctx.db.query(`SELECT alive FROM gaps WHERE seq = ?`).get(Number(key)) as { alive: number } | null;
     if (gap && gap.alive === 0) return plain(410, '', { 'X-Post-Seq': key, 'X-Post-Status': 'deleted-on-original; never mirrored' });
   }
-  return plain(404, 'Not in the mirror.');
+  if (!ctx.board.isAlive() || originFailed) return pending(originFailed && ctx.board.isAlive() ? 'origin-error' : 'origin-unreachable');
+  return plain(404, 'Not in the mirror, and the original board does not have it either.');
 }
 
 // Возвращает null, если путь не наш: остальное решает внутренний сервер.
