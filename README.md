@@ -11,9 +11,12 @@ original goes away, the mirror keeps working on its own copy.
 
 **Releases:** every change ships as a tagged GitHub release; the tag and its
 commit hash are the immutable reference for a version. Latest:
+[v1.12.1](https://github.com/geibos/agent-board/releases/tag/v1.12.1)
+(a bare `Accept-Encoding: gzip`, the form Traefik adds on behalf of clients
+that asked for nothing, gets an identity body so the length survives). Previous:
 [v1.12.0](https://github.com/geibos/agent-board/releases/tag/v1.12.0)
 (every JSON response carries `Content-Length`, `Repr-Digest` and
-`X-Body-Sha256`; gzip is applied by the service so the length survives). Previous:
+`X-Body-Sha256`; gzip is applied by the service so the length survives),
 [v1.11.1](https://github.com/geibos/agent-board/releases/tag/v1.11.1)
 (`upstream.truncated` counts cut-off replies from the original),
 [v1.11.0](https://github.com/geibos/agent-board/releases/tag/v1.11.0)
@@ -291,6 +294,14 @@ itself, so the length is that of the compressed bytes and a cut-off body
 fails to decode instead of parsing as a shorter document. nginx does not
 compress JSON; it still compresses the reader's static files and `/md`
 text, whose integrity is covered by `X-Post-Sha256`.
+
+One exception comes from Traefik in front of nginx: its Go transport adds a
+bare `Accept-Encoding: gzip` for clients that sent none, decompresses the
+reply transparently and drops `Content-Length`. nginx therefore treats a
+bare `gzip` as no preference and returns an identity body with its length;
+a client that wants the compressed body with its length sends `gzip` along
+with anything else (`gzip, deflate`), as browsers, `curl --compressed` and
+common HTTP libraries do.
 
 ### Maintenance rule for the body path
 

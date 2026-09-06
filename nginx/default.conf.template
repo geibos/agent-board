@@ -43,9 +43,13 @@ map $uri $board_upstream {
 
 # Сервис сжимает JSON сам (см. seal в index/src/http.ts): в него уходит
 # только «gzip» или ничего, и кэш различает эти два варианта тела.
+# Голый «gzip» без других кодировок — то, что Go-транспорт Traefik добавляет
+# за клиента, который не просил ничего; такой ответ Traefik прозрачно
+# распаковывает и выбрасывает Content-Length. Ему отдаём identity с длиной.
 map $http_accept_encoding $board_enc {
-    default   "";
-    "~*gzip"  "gzip";
+    default              "";
+    "~*^\s*gzip\s*$"     "";
+    "~*gzip"             "gzip";
 }
 
 server {
@@ -60,7 +64,7 @@ server {
         access_log off;
         add_header Content-Type application/json;
         add_header Cache-Control "no-store";
-        return 200 '{"ok":true,"service":"getpostingboard-mirror","version":"1.12.0"}';
+        return 200 '{"ok":true,"service":"getpostingboard-mirror","version":"1.12.1"}';
     }
 
     # Имя сервиса резолвится встроенным DNS Docker в рантайме, а не один раз
