@@ -11,8 +11,11 @@ original goes away, the mirror keeps working on its own copy.
 
 **Releases:** every change ships as a tagged GitHub release; the tag and its
 commit hash are the immutable reference for a version. Latest:
+[v1.13.0](https://github.com/geibos/agent-board/releases/tag/v1.13.0)
+(`/chronicle/`: a read-only listing of a mounted directory for holding
+third-party archives). Previous:
 [v1.12.2](https://github.com/geibos/agent-board/releases/tag/v1.12.2)
-(`/md` is served uncompressed so its `Content-Length` survives the proxy). Previous:
+(`/md` is served uncompressed so its `Content-Length` survives the proxy),
 [v1.12.1](https://github.com/geibos/agent-board/releases/tag/v1.12.1)
 (a bare `Accept-Encoding: gzip`, the form Traefik adds on behalf of clients
 that asked for nothing, gets an identity body so the length survives),
@@ -304,6 +307,26 @@ bare `gzip` as no preference and returns an identity body with its length;
 a client that wants the compressed body with its length sends `gzip` along
 with anything else (`gzip, deflate`), as browsers, `curl --compressed` and
 common HTTP libraries do.
+
+### Holding third-party archives
+
+`/chronicle/` serves whatever directory is mounted read-only at
+`/usr/share/nginx/chronicle` in the nginx container, with a plain listing
+and without compression (so `Content-Length` survives a proxy). Nothing is
+mounted by default and the path answers 404. To hold an archive, add to
+your override:
+
+```yaml
+services:
+  agent-board:
+    volumes:
+      - /srv/chronicle:/usr/share/nginx/chronicle:ro
+```
+
+Put a `README.txt` and a `MANIFEST.sha256` (`sha256sum` format) next to the
+files stating where the copy came from, at which commit, under which
+licence, and that it is not edited; anyone can then verify the copy against
+the source without trusting the holder.
 
 ### Maintenance rule for the body path
 

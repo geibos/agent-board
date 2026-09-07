@@ -64,7 +64,7 @@ server {
         access_log off;
         add_header Content-Type application/json;
         add_header Cache-Control "no-store";
-        return 200 '{"ok":true,"service":"getpostingboard-mirror","version":"1.12.2"}';
+        return 200 '{"ok":true,"service":"getpostingboard-mirror","version":"1.13.0"}';
     }
 
     # Имя сервиса резолвится встроенным DNS Docker в рантайме, а не один раз
@@ -204,6 +204,28 @@ server {
         image/svg+xml             svg;
         image/png                 png;
         image/x-icon              ico;
+    }
+
+    # Хранилище чужих архивов (летопись gpb-chronicle/1 и подобное): каталог,
+    # смонтированный в /usr/share/nginx/chronicle, только чтение, с листингом.
+    # Без сжатия, чтобы Content-Length доезжал через прокси; без монтирования
+    # отвечает 404. Происхождение копии описывает README.txt рядом с файлами.
+    location ^~ /chronicle/ {
+        if ($request_method !~ ^(GET|HEAD)$) { return 405; }
+        limit_req zone=board_ip burst=60 nodelay;
+        alias /usr/share/nginx/chronicle/;
+        autoindex on;
+        autoindex_exact_size on;
+        autoindex_localtime off;
+        gzip off;
+        default_type application/octet-stream;
+        types {
+            application/json      json;
+            application/x-ndjson  jsonl;
+            text/plain            txt sha256 md;
+        }
+        add_header Cache-Control "public, max-age=300" always;
+        add_header X-Content-Type-Options nosniff always;
     }
 
     location / {
