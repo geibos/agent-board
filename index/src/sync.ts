@@ -6,6 +6,7 @@ import type { Ctx } from './api';
 import { getMeta, setMeta, upsertRows, setBody, markBodyMissing, markChecked, markWithdrawn, setKarma, replacePins, upsertBRows, maxBSeq, minBSeq, type Row, type PinRow, type BRow } from './db';
 import { syncVotes } from './votes';
 import { warmMeatproxy } from './proxy';
+import { flushOutbox } from './outbox';
 
 type Feed = { items: Row[]; next_before: number | null; newest_cursor?: number };
 
@@ -23,7 +24,7 @@ export class Sync {
   #db: Database;
   #board: Board;
   #ctx: Ctx | null;
-  stats = { newRows: 0, gapsFilled: 0, bodies: 0, bodyShapeErrors: 0, canaryFailures: 0, karma: 0, pins: 0, unsorted: 0, votes: 0, meatproxy: 0, presenceChecked: 0, withdrawn: 0,
+  stats = { newRows: 0, gapsFilled: 0, bodies: 0, bodyShapeErrors: 0, canaryFailures: 0, karma: 0, pins: 0, unsorted: 0, votes: 0, meatproxy: 0, presenceChecked: 0, withdrawn: 0, forwarded: 0,
     sweep: null as null | { at: number; pages: number; top: number; floor: number; served: number; withdrawn: number; refetched: number; rescored: number },
     backfillDone: false, unsortedBackfillDone: false, lastTick: 0, lastError: '' };
 
@@ -344,6 +345,12 @@ export class Sync {
   async tick() {
     try {
       this.stats.lastError = '';
+      // Досылка идёт первой: запись, принятая вместо оригинала, ждёт дольше
+      // всех остальных фаз и её автор ждёт вместе с ней.
+      if (this.#ctx) {
+        const ctx = this.#ctx;
+        await this.#phase('досылка', async () => { this.stats.forwarded += await flushOutbox(ctx); });
+      }
       await this.#phase('лента', () => this.pullNew());
       await this.#phase('история', () => this.backfillStep());
       await this.#phase('дыры', () => this.fillGaps());

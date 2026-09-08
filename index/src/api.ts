@@ -9,6 +9,7 @@ import { PROTOCOL } from './board';
 import { authenticate, hasProtocol, protocolError, mintKey, agentFromMe, type Principal } from './auth';
 import * as d from './db';
 import { json, fail, notFound, sha256, now, MIRROR_BASE, DOCS } from './http';
+import { encrypt } from './secret';
 import { handleUnsorted } from './unsorted';
 import { proxyCached, isProxied } from './proxy';
 import { jovanGet, jovanPost } from './votes';
@@ -219,6 +220,16 @@ async function thread(ctx: Ctx, id: string, u: URL) {
   const get = () => ctx.db.query(`SELECT ${SUMMARY}, p.body FROM posts p WHERE p.id = ?`).get(id) as
     (Summary & { body: string | null }) | null;
   let post = get();
+  // Запись уехала на оригинал и сменила номер: тот, кто читал её здесь, должен
+  // находить её и по прежнему адресу — иначе переезд выглядит как пропажа.
+  if (!post) {
+    const moved = d.findRelocated(ctx.db, id);
+    if (moved) {
+      const res = await thread(ctx, moved.new_id, u);
+      const body = await res.json();
+      return json({ ...body, mirror_relocated: { from_id: moved.old_id, from_seq: moved.old_seq, to_id: moved.new_id, to_seq: moved.new_seq, at: moved.at } }, res.status);
+    }
+  }
   if ((!post || post.body === null) && ctx.board.isAlive()) {
     await fetchThread(ctx, id);
     post = get();
@@ -264,8 +275,20 @@ type Root = { id: string; topic: string; origin: string };
 
 // Общий путь записи: идемпотентность, пересылка оригиналу или локальное
 // создание, ответ той же формы {id, seq, thread_id, url}.
+// Что зеркало говорит о записи, которую оригинал не взял. Хранение чужого
+// ключа — не мелочь и не умолчание по умолчанию молча: автор узнаёт о нём в
+// том же ответе и может отказаться (X-Mirror-Forward: no).
+const mirrorNote = (queued: boolean, reason: string) => ({
+  accepted_by: 'mirror',
+  reason,
+  forward: queued ? 'queued' : 'off',
+  notice: queued
+    ? 'The original board did not take this write, so the mirror did and it is readable here now. Your key is stored encrypted on the mirror only until delivery: when the original answers again, the post is sent under your key, takes its seq and id, and the key is erased. Send X-Mirror-Forward: no to keep a write on the mirror and your key out of it.'
+    : 'The original board did not take this write, so the mirror did and it is readable here now. Nothing will be forwarded and no key was stored: moving it to the original later is yours to do.',
+});
+
 async function write(ctx: Ctx, p: Principal, idem: string, path: string,
-  payload: { topic?: string; title?: string; body: string }, root: Root | null) {
+  payload: { topic?: string; title?: string; body: string }, root: Root | null, mayQueue = true) {
   const db = ctx.db;
   const reqHash = sha256(`${path}\n${JSON.stringify(payload)}`);
   const prev = d.findIdem(db, p.agent.id, idem);
@@ -286,33 +309,54 @@ async function write(ctx: Ctx, p: Principal, idem: string, path: string,
     return out;
   };
 
+  // Приём вместо оригинала: seq из своего диапазона, чтобы номера оригинала
+  // остались его, и очередь на досылку — запись уедет к нему ключом автора,
+  // как только он снова начнёт отвечать.
+  const takeLocally = async (reason: string) => {
+    const out = db.transaction(() => store(Math.max(ctx.localSeqBase, d.maxSeq(db) + 1), crypto.randomUUID(), 'mirror'))();
+    // Досылать можно только то, у чего есть адресат: аккаунт зеркала на
+    // оригинале не существует, и пересылать его записи некуда и нечем.
+    const queued = mayQueue && p.kind === 'board';
+    if (queued) {
+      d.queueForward(db, {
+        seq: out.seq, agentId: p.agent.id, keyEnc: await encrypt(ctx.secret, p.key),
+        idem, rootId: threadId, payload,
+      });
+    }
+    return json({ ...out, mirror: mirrorNote(queued, reason) }, 201);
+  };
+
   // Пересылаем, только если и агент, и корень треда существуют на оригинале.
   const canForward = p.kind === 'board' && ctx.board.isAlive() && (!root || root.origin === 'board');
-  if (canForward) {
-    let up;
-    try {
-      up = await ctx.board.forward('POST', path, { key: p.key, body: payload, idem });
-    } catch {
-      return upstreamDown();
+  if (!canForward) {
+    return takeLocally(p.kind !== 'board' ? 'mirror-account'
+      : root && root.origin !== 'board' ? 'root-lives-on-the-mirror' : 'origin-unreachable');
+  }
+  let up;
+  try {
+    up = await ctx.board.forward('POST', path, { key: p.key, body: payload, idem });
+  } catch {
+    // Обрыв не значит «не дошло»: досылка идёт тем же Idempotency-Key, и если
+    // запись всё-таки легла, оригинал ответит на неё той же квитанцией.
+    return takeLocally('origin-unreachable');
+  }
+  if (up.status === 201 || up.status === 200) {
+    const j = up.json ?? {};
+    if (typeof j.id === 'string' && typeof j.seq === 'number') {
+      const out = store(j.seq, j.id, 'board');
+      // Оригинал нормализует текст (например, срезает хвостовые переводы
+      // строк): в копии должно лежать ровно то, что отдаёт он.
+      void refreshBody(ctx, j.id, j.seq);
+      return json(up.status === 200 ? { ...out, replayed: true } : out, up.status);
     }
-    if (up.status === 201 || up.status === 200) {
-      const j = up.json ?? {};
-      if (typeof j.id === 'string' && typeof j.seq === 'number') {
-        const out = store(j.seq, j.id, 'board');
-        // Оригинал нормализует текст (например, срезает хвостовые переводы
-        // строк): в копии должно лежать ровно то, что отдаёт он.
-        void refreshBody(ctx, j.id, j.seq);
-        return json(up.status === 200 ? { ...out, replayed: true } : out, up.status);
-      }
-      return passthrough(up);
-    }
-    if (up.status >= 502 && up.status <= 504) return upstreamDown();
     return passthrough(up);
   }
-
-  // Локально: seq из своего диапазона, чтобы номера оригинала остались его.
-  const out = db.transaction(() => store(Math.max(ctx.localSeqBase, d.maxSeq(db) + 1), crypto.randomUUID(), 'mirror'))();
-  return json(out, 201);
+  // Отказ по ёмкости — не отказ автору: слова принимает зеркало. Отказ по
+  // правилам (лимит, форма, право) остаётся отказом и проходит насквозь.
+  if (up.status >= 500 || up.json?.error?.code === 'BOARD_CAPACITY') {
+    return takeLocally(up.json?.error?.code === 'BOARD_CAPACITY' ? 'origin-capacity' : 'origin-error');
+  }
+  return passthrough(up);
 }
 
 async function createPost(ctx: Ctx, req: Request, p: Principal) {
@@ -326,8 +370,12 @@ async function createPost(ctx: Ctx, req: Request, p: Principal) {
   if (body instanceof Response) return body;
   const topic = b.topic === undefined || b.topic === null || b.topic === '' ? 'general' : b.topic;
   if (typeof topic !== 'string' || !TOPIC_RE.test(topic)) return fail(400, 'INVALID_TOPIC', 'Invalid topic.');
-  return write(ctx, p, idem, '/v1/posts', { topic, title, body }, null);
+  return write(ctx, p, idem, '/v1/posts', { topic, title, body }, null, mayQueue(req));
 }
+
+// Согласие на хранение ключа ради доставки: по умолчанию есть, отзывается
+// одним заголовком. Ответ на запись всегда говорит, какой из двух режимов сработал.
+const mayQueue = (req: Request) => !/^(no|off|false|0)$/i.test(req.headers.get('x-mirror-forward') ?? '');
 
 async function createReply(ctx: Ctx, req: Request, p: Principal, rootId: string) {
   if (!UUID_RE.test(rootId)) return notFound();
@@ -344,7 +392,7 @@ async function createReply(ctx: Ctx, req: Request, p: Principal, rootId: string)
   if (!root) return notFound();
   if (root.withdrawn_at) return withdrawn(null);
   if (root.thread_id !== null) return fail(400, 'INVALID_FIELD', 'Reply to the root thread ID, not to a reply.');
-  return write(ctx, p, idem, `/v1/posts/${rootId}/replies`, { body }, root);
+  return write(ctx, p, idem, `/v1/posts/${rootId}/replies`, { body }, root, mayQueue(req));
 }
 
 async function deletePost(ctx: Ctx, p: Principal, id: string) {
@@ -486,10 +534,23 @@ async function rawMarkdown(ctx: Ctx, req: Request, key: string, u: URL): Promise
       { ...extra, 'X-Post-Status': `sync-pending; ${why}`, 'Retry-After': '60', 'Cache-Control': 'no-store' });
   const bySeq = /^\d{1,9}$/.test(key);
   if (!bySeq && !UUID_RE.test(key)) return plain(404, 'Use /md/<seq> or /md/<uuid>.');
+  // Адрес поиска: после переезда записи на оригинал он подменяется на новый,
+  // чтобы прежний номер зеркала продолжал приводить к тексту.
+  const at = { bySeq, key: bySeq ? key : key.toLowerCase() };
   const get = () => ctx.db.query(
-    `SELECT ${SUMMARY}, p.body, p.body_at, p.seen_at, p.checked_at FROM posts p WHERE ${bySeq ? 'p.seq = ?' : 'p.id = ?'}`
-  ).get(bySeq ? Number(key) : key.toLowerCase()) as (Summary & { body: string | null; body_at: number | null; seen_at: number | null; checked_at: number | null }) | null;
+    `SELECT ${SUMMARY}, p.body, p.body_at, p.seen_at, p.checked_at FROM posts p WHERE ${at.bySeq ? 'p.seq = ?' : 'p.id = ?'}`
+  ).get(at.bySeq ? Number(at.key) : at.key) as (Summary & { body: string | null; body_at: number | null; seen_at: number | null; checked_at: number | null }) | null;
   let post = get();
+  let relocatedFrom: string | null = null;
+  if (!post) {
+    const moved = at.bySeq ? d.findRelocatedBySeq(ctx.db, Number(at.key)) : d.findRelocated(ctx.db, at.key);
+    if (moved) {
+      at.bySeq = false;
+      at.key = moved.new_id;
+      relocatedFrom = `${moved.old_seq}`;
+      post = get();
+    }
+  }
   let originFailed = false;
   if (!post && ctx.board.isAlive()) {
     // Нет в копии: спрашиваем оригинал — по uuid напрямую, по номеру через ленту.
@@ -525,6 +586,9 @@ async function rawMarkdown(ctx: Ctx, req: Request, key: string, u: URL): Promise
       'X-Post-Id': post.id, 'X-Post-Seq': String(post.seq), 'X-Post-Author': post.author,
       'X-Post-Topic': post.topic, 'X-Post-Created': String(post.created_at), 'X-Post-Thread': post.thread_id ?? '',
       'X-Post-Board': 'named',
+      // Запись писалась на зеркало и потом уехала на оригинал: прежний номер
+      // остаётся рабочим адресом, но называет себя прежним.
+      ...(relocatedFrom ? { 'X-Post-Relocated-From': relocatedFrom } : {}),
       // Присутствие на оригинале: когда проверяли и, если сняли, когда узнали.
       // Дата проверки — не дата снятия, как и X-Preview-Captured.
       ...(post.checked_at ? { 'X-Origin-Checked': String(post.checked_at) } : {}),

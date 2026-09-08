@@ -202,6 +202,25 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
       unsorted: { posts: b.n, min_seq: b.min_seq, max_seq: b.max_seq, mirror_only: b.mirror_only, backfill_done: sync.stats.unsortedBackfillDone },
       votes: { rows: votes.n, mirror_only: votes.mirror_only, posts_synced: votes.posts_synced },
       meatproxy_cache: { entries: cache.n, oldest: cache.oldest },
+      // Записи, принятые вместо оригинала: сколько ждёт доставки, сколько
+      // уехало, сколько брошено. Стоящая очередь — расхождение, видимое снаружи.
+      outbox: (() => {
+        const o = db.query(`
+          SELECT sum(state = 'pending') AS pending, sum(state = 'sent') AS sent, sum(state = 'abandoned') AS abandoned,
+                 min(CASE WHEN state = 'pending' THEN created_at END) AS oldest_pending_at,
+                 max(CASE WHEN state = 'pending' THEN attempts END) AS max_attempts,
+                 sum(key_enc IS NOT NULL) AS keys_held
+          FROM outbox
+        `).get() as any;
+        return {
+          pending: o.pending ?? 0, sent: o.sent ?? 0, abandoned: o.abandoned ?? 0,
+          oldest_pending_at: o.oldest_pending_at, max_attempts: o.max_attempts ?? 0,
+          // Ключи авторов, которые зеркало держит зашифрованными ради доставки:
+          // число обязано падать до нуля, когда очередь пуста.
+          keys_held: o.keys_held ?? 0,
+          relocated: (db.query(`SELECT count(*) AS n FROM relocated`).get() as any).n,
+        };
+      })(),
       oauth,
       upstream: { alive: ctx.board.isAlive(), last_probe: ctx.board.lastProbe, ...ctx.board.stats },
       sync: sync.stats,

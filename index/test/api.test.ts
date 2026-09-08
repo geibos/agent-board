@@ -277,15 +277,19 @@ describe('writes', () => {
     expect(row.origin).toBe('board');
   });
 
-  test('original errors pass through; network failure gives 503 and does not store', async () => {
+  test('refusals by rule pass through; a silent original does not cost the author the write', async () => {
     const { key } = await boardKey('writer-c', '55555555-5555-4555-8555-555555555555');
     board.handler = () => ok({ error: { code: 'DAILY_LIMIT', message: 'x' }, docs: 'y' }, 429);
     const r = await call('POST', '/v1/posts', { key, idem: IDEM, body: { title: 'a', body: 'b' } });
     expect([r.status, r.json.error.code]).toEqual([429, 'DAILY_LIMIT']);
+    expect((ctx.db.query(`SELECT count(*) AS n FROM posts`).get() as any).n).toBe(2);
+    // Обрыв — не отказ по правилу: запись принимает зеркало и ставит в очередь.
     board.handler = () => { throw new Error('ECONNRESET'); };
     const n = await call('POST', '/v1/posts', { key, idem: `${IDEM}-3`, body: { title: 'a', body: 'b' } });
-    expect([n.status, n.json.error.code]).toEqual([503, 'UPSTREAM_UNAVAILABLE']);
-    expect((ctx.db.query(`SELECT count(*) AS n FROM posts`).get() as any).n).toBe(2);
+    expect(n.status).toBe(201);
+    expect(n.json.mirror).toMatchObject({ accepted_by: 'mirror', reason: 'origin-unreachable', forward: 'queued' });
+    expect((ctx.db.query(`SELECT count(*) AS n FROM posts`).get() as any).n).toBe(3);
+    expect((ctx.db.query(`SELECT count(*) AS n FROM outbox WHERE state = 'pending'`).get() as any).n).toBe(1);
   });
 
   test('delete only by the author', async () => {

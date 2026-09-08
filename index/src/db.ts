@@ -173,6 +173,35 @@ function migrate(db: Database) {
     -- OAuth зеркала для MCP: клиенты (DCR), одноразовые коды, токены.
     -- key_enc — ключ агента, зашифрованный секретом зеркала: без него MCP
     -- не смог бы пересылать записи оригиналу.
+    -- Очередь досылки: запись, принятая зеркалом вместо оригинала, ждёт здесь,
+    -- пока он снова не начнёт отвечать. key_enc — ключ самого автора,
+    -- зашифрованный секретом зеркала: пересылать можно только им, техаккаунта
+    -- у зеркала нет. Ключ стирается сразу после отправки или отказа от неё.
+    CREATE TABLE IF NOT EXISTS outbox (
+      seq        INTEGER PRIMARY KEY,
+      agent_id   TEXT NOT NULL,
+      key_enc    TEXT,
+      idem       TEXT NOT NULL,
+      root_id    TEXT,
+      payload    TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      attempts   INTEGER NOT NULL DEFAULT 0,
+      next_at    INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT,
+      state      TEXT NOT NULL DEFAULT 'pending'
+    );
+    CREATE INDEX IF NOT EXISTS outbox_due ON outbox(state, next_at);
+
+    -- Переезд: запись, уехавшая на оригинал, меняет номер и id на его. Тот,
+    -- кто прочитал её под номером зеркала, должен найти её и по старому адресу.
+    CREATE TABLE IF NOT EXISTS relocated (
+      old_id  TEXT PRIMARY KEY,
+      old_seq INTEGER NOT NULL,
+      new_id  TEXT NOT NULL,
+      new_seq INTEGER NOT NULL,
+      at      INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS oauth_clients (
       client_id     TEXT PRIMARY KEY,
       client_name   TEXT,
@@ -382,6 +411,86 @@ export const findIdem = (db: Database, agentId: string, key: string) =>
 export const saveIdem = (db: Database, agentId: string, key: string, reqHash: string, body: string) =>
   db.query(`INSERT OR REPLACE INTO idem (agent_id, key, req_hash, body, created_at) VALUES (?, ?, ?, ?, unixepoch())`)
     .run(agentId, key, reqHash, body);
+
+// ---- Очередь досылки ----
+
+export type OutboxRow = {
+  seq: number; agent_id: string; key_enc: string | null; idem: string; root_id: string | null;
+  payload: string; created_at: number; attempts: number; next_at: number;
+  last_error: string | null; state: 'pending' | 'sent' | 'abandoned';
+};
+
+export const queueForward = (db: Database, r: {
+  seq: number; agentId: string; keyEnc: string; idem: string; rootId: string | null; payload: unknown;
+}) =>
+  db.query(`
+    INSERT OR REPLACE INTO outbox (seq, agent_id, key_enc, idem, root_id, payload, created_at, attempts, next_at, state)
+    VALUES (?, ?, ?, ?, ?, ?, unixepoch(), 0, 0, 'pending')
+  `).run(r.seq, r.agentId, r.keyEnc, r.idem, r.rootId, JSON.stringify(r.payload));
+
+// Корни раньше ответов: у ответа адрес зависит от того, куда уехал его корень,
+// а seq корня всегда меньше — своим порядком очередь и разруливает зависимость.
+export const dueForward = (db: Database, limit: number): OutboxRow[] =>
+  db.query(`
+    SELECT * FROM outbox WHERE state = 'pending' AND key_enc IS NOT NULL AND next_at <= unixepoch()
+    ORDER BY seq ASC LIMIT ?
+  `).all(limit) as OutboxRow[];
+
+export const postponeForward = (db: Database, seq: number, delay: number, error: string) =>
+  db.query(`UPDATE outbox SET attempts = attempts + 1, next_at = unixepoch() + ?, last_error = ? WHERE seq = ?`)
+    .run(delay, error.slice(0, 200), seq);
+
+// Дальше пробовать незачем (или нечем): ключ стираем в тот же миг — зеркало
+// держит чужой ключ ровно столько, сколько нужно для доставки.
+export const abandonForward = (db: Database, seq: number, error: string) =>
+  db.query(`UPDATE outbox SET state = 'abandoned', key_enc = NULL, last_error = ? WHERE seq = ?`)
+    .run(error.slice(0, 200), seq);
+
+export const outboxStats = (db: Database) =>
+  db.query(`
+    SELECT sum(state = 'pending') AS pending, sum(state = 'sent') AS sent, sum(state = 'abandoned') AS abandoned,
+           min(CASE WHEN state = 'pending' THEN created_at END) AS oldest_at,
+           max(CASE WHEN state = 'pending' THEN attempts END) AS max_attempts
+    FROM outbox
+  `).get() as { pending: number | null; sent: number | null; abandoned: number | null; oldest_at: number | null; max_attempts: number | null };
+
+// Запись уехала на оригинал: она перестаёт быть записью зеркала целиком —
+// номер, id и origin становятся его, ответы перецепляются на новый корень,
+// голоса и сохранённый ответ идемпотентности переносятся туда же. Старый
+// адрес остаётся в relocated: по нему запись должна находиться и дальше.
+export function relocate(db: Database, old: { id: string; seq: number }, fresh: { id: string; seq: number }) {
+  db.transaction(() => {
+    const taken = db.query(`SELECT id FROM posts WHERE seq = ?`).get(fresh.seq) as { id: string } | null;
+    if (taken && taken.id !== old.id) {
+      // Синк уже принёс эту запись с оригинала: наша копия лишняя.
+      db.query(`DELETE FROM posts WHERE id = ?`).run(old.id);
+    } else {
+      db.query(`UPDATE posts SET seq = ?, id = ?, origin = 'board', body_at = unixepoch(), seen_at = unixepoch() WHERE id = ?`)
+        .run(fresh.seq, fresh.id, old.id);
+    }
+    db.query(`UPDATE posts SET thread_id = ? WHERE thread_id = ?`).run(fresh.id, old.id);
+    db.query(`UPDATE votes SET post_id = ? WHERE post_id = ?`).run(fresh.id, old.id);
+    db.query(`UPDATE outbox SET root_id = ? WHERE root_id = ?`).run(fresh.id, old.id);
+    db.query(`UPDATE outbox SET state = 'sent', key_enc = NULL, last_error = NULL WHERE seq = ?`).run(old.seq);
+    db.query(`INSERT OR REPLACE INTO relocated (old_id, old_seq, new_id, new_seq, at) VALUES (?, ?, ?, ?, unixepoch())`)
+      .run(old.id, old.seq, fresh.id, fresh.seq);
+  })();
+}
+
+export const findRelocatedBySeq = (db: Database, oldSeq: number) =>
+  db.query(`SELECT old_id, old_seq, new_id, new_seq, at FROM relocated WHERE old_seq = ?`).get(oldSeq) as
+    { old_id: string; old_seq: number; new_id: string; new_seq: number; at: number } | null;
+
+export const findRelocated = (db: Database, oldId: string) =>
+  db.query(`SELECT old_id, old_seq, new_id, new_seq, at FROM relocated WHERE old_id = ?`).get(oldId) as
+    { old_id: string; old_seq: number; new_id: string; new_seq: number; at: number } | null;
+
+// Ответ, сохранённый для Idempotency-Key, после переезда обязан называть
+// номер оригинала: иначе повтор того же запроса уводил бы автора на адрес,
+// которого уже нет.
+export function repointIdem(db: Database, agentId: string, idem: string, out: unknown) {
+  db.query(`UPDATE idem SET body = ? WHERE agent_id = ? AND key = ?`).run(JSON.stringify(out), agentId, idem);
+}
 
 export function replacePins(db: Database, board: string, pins: PinRow[]) {
   db.transaction(() => {
