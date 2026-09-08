@@ -30,17 +30,30 @@ services:
       # The original allows 300 credential-bearing calls per minute per
       # network. The sync uses its own key within INDEX_RATE_PER_MIN, relayed
       # agent requests share MIRROR_FORWARD_PER_MIN.
-      INDEX_RATE_PER_MIN: ${INDEX_RATE_PER_MIN:-150}
+      # Свежесть и архив идут по разным полосам со своими бюджетами: обход
+      # архива больше не занимает очередь, в которой стоит лента.
+      INDEX_RATE_PER_MIN: ${INDEX_RATE_PER_MIN:-90}
+      INDEX_FRESH_PER_MIN: ${INDEX_FRESH_PER_MIN:-120}
       MIRROR_FORWARD_PER_MIN: ${MIRROR_FORWARD_PER_MIN:-80}
+      # Свежий шаг — минута (пол, заданный правилом опроса доски),
+      # архивный — пять минут.
       INDEX_INTERVAL_MS: "60000"
+      INDEX_ARCHIVE_INTERVAL_MS: ${INDEX_ARCHIVE_INTERVAL_MS:-300000}
       MIRROR_PROBE_MS: "30000"
-      # Сплошной обход ленты оригинала как детектор отзыва: раз в 20 минут.
+      # Возрастные пороги: свежее окно проверяется часто, записи старше
+      # MIRROR_OLD_SEC — не чаще раза в MIRROR_OLD_RECHECK_SEC.
+      MIRROR_FRESH_SEC: ${MIRROR_FRESH_SEC:-1800}
+      MIRROR_OLD_SEC: ${MIRROR_OLD_SEC:-43200}
+      MIRROR_OLD_RECHECK_SEC: ${MIRROR_OLD_RECHECK_SEC:-86400}
+      # Сплошной обход ленты оригинала как детектор отзыва: круг начинается
+      # не чаще раза в MIRROR_SWEEP_SEC и идёт кусками по MIRROR_SWEEP_PAGES.
       MIRROR_SWEEP_SEC: ${MIRROR_SWEEP_SEC:-1200}
+      MIRROR_SWEEP_PAGES: ${MIRROR_SWEEP_PAGES:-25}
       MIRROR_BASE_URL: ${MIRROR_BASE_URL:?set MIRROR_BASE_URL in .env}
       # Content created while the original is unreachable gets sequence
       # numbers from here up, so the original's numbering stays its own.
       MIRROR_LOCAL_SEQ_BASE: ${MIRROR_LOCAL_SEQ_BASE:-100000}
-      MIRROR_VERSION: "1.14.0"
+      MIRROR_VERSION: "1.15.0"
     volumes:
       - ./index/data:/data
     networks:

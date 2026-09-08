@@ -20,12 +20,38 @@ const toRow = (i: any): Row => ({
 
 type BFeed = { items: BRow[]; next_before: number | null };
 
+// Запросы к оригиналу идут по одному около двух секунд каждый (keep-alive у
+// доски виснет, поэтому соединение закрывается). Последовательная очередь на
+// сотню тел — это минуты, за которые запись успевает родиться и исчезнуть;
+// бюджет при этом расходуется на десятую долю. Поэтому — окно из N
+// одновременных запросов, ограниченное сверху ведром своей полосы.
+async function pool<T>(items: T[], concurrency: number, worker: (item: T) => Promise<void>) {
+  let next = 0;
+  const runners = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    for (;;) {
+      const i = next;
+      next += 1;
+      if (i >= items.length) return;
+      await worker(items[i]);
+    }
+  });
+  await Promise.all(runners);
+}
+
+// Возрастные пороги: свежее окно доска правит и удаляет чаще всего, дальше
+// вероятность падает. Проверять всё с одинаковой частотой — значит тратить
+// на давно застывший архив то, чего не хватает свежему.
+const FRESH_SEC = Number(process.env.MIRROR_FRESH_SEC ?? 1800);
+const OLD_SEC = Number(process.env.MIRROR_OLD_SEC ?? 43200);
+const OLD_RECHECK_SEC = Number(process.env.MIRROR_OLD_RECHECK_SEC ?? 86400);
+
 export class Sync {
   #db: Database;
   #board: Board;
   #ctx: Ctx | null;
   stats = { newRows: 0, gapsFilled: 0, bodies: 0, bodyShapeErrors: 0, canaryFailures: 0, karma: 0, pins: 0, unsorted: 0, votes: 0, meatproxy: 0, presenceChecked: 0, withdrawn: 0, forwarded: 0,
-    sweep: null as null | { at: number; pages: number; top: number; floor: number; served: number; withdrawn: number; refetched: number; rescored: number },
+    sweep: null as null | { at: number; pages: number; top: number; floor: number; served: number; withdrawn: number; refetched: number; rescored: number; complete: boolean; cursor: number | null },
+    freshTick: 0, archiveTick: 0, freshError: '', archiveError: '',
     backfillDone: false, unsortedBackfillDone: false, lastTick: 0, lastError: '' };
 
   constructor(db: Database, board: Board, ctx: Ctx | null = null) {
@@ -84,7 +110,7 @@ export class Sync {
     let before: number | null = null;
     const fresh: Row[] = [];
     for (let page = 0; page < 40; page += 1) {
-      const feed: Feed = await this.#board.get('/v1/activity', { limit: 30, before });
+      const feed: Feed = await this.#board.get('/v1/activity', { limit: 30, before }, 'fresh');
       const items = (feed.items ?? []).map(toRow);
       // Верхушка ленты оригинала: по ней /stats считает отставание синка
       // (tip_lag) отдельно от разрывов внутри уже сохранённого диапазона.
@@ -174,9 +200,27 @@ export class Sync {
     const rows = this.#db.query(
       `SELECT seq, id FROM posts WHERE body IS NULL AND origin = 'board' ORDER BY seq DESC LIMIT ?`
     ).all(limit) as { seq: number; id: string }[];
-    for (const r of rows) {
+    await this.#takeBodies(rows, 'archive', 4);
+  }
+
+  // Тела только что появившихся записей — отдельным проходом и первым делом.
+  // Пост, удалённый автором через минуту, доедет до архива только если тело
+  // взято в ту же минуту; всё остальное успевает подождать.
+  async fetchFreshBodies(limit = 60, concurrency = 8) {
+    const rows = this.#db.query(`
+      SELECT seq, id FROM posts
+      WHERE body IS NULL AND origin = 'board' AND created_at > unixepoch() - ?
+      ORDER BY seq DESC LIMIT ?
+    `).all(FRESH_SEC, limit) as { seq: number; id: string }[];
+    await this.#takeBodies(rows, 'fresh', concurrency);
+  }
+
+  async #takeBodies(rows: { seq: number; id: string }[], lane: 'fresh' | 'archive', concurrency: number) {
+    let failure: unknown = null;
+    await pool(rows, concurrency, async (r) => {
+      if (failure) return;
       try {
-        const t: any = await this.#board.get(`/v1/posts/${r.id}`, { limit: 1 });
+        const t: any = await this.#board.get(`/v1/posts/${r.id}`, { limit: 1 }, lane);
         const body = t?.post?.body;
         // Пустая строка в схеме — «снято до докачки»; ответ 200 без поля body —
         // не отзыв, а неразобранная форма. Оставляем NULL и считаем (#11507).
@@ -184,9 +228,11 @@ export class Sync {
         else this.stats.bodyShapeErrors += 1;
       } catch (err: any) {
         if (err?.status === 404) markBodyMissing(this.#db, r.seq);
-        else throw err;
+        // Отказ сети или доски прекращает проход, но не молча: фаза сообщит.
+        else failure = err;
       }
-    }
+    });
+    if (failure) throw failure;
   }
 
   // Сверка присутствия: наличие в копии — не факт о мире. По одному запросу
@@ -197,14 +243,14 @@ export class Sync {
   // тем же вызовом в ту же секунду. Однородный отказ метода (401 без
   // заголовка, смена маршрута, 5xx) выглядит убедительнее правды — без
   // канарейки он превратился бы в массовое «снято» (#18948).
-  async #canary(): Promise<boolean> {
+  async #canary(lane: 'fresh' | 'archive' = 'archive'): Promise<boolean> {
     const live = this.#db.query(`
       SELECT id FROM posts WHERE origin = 'board' AND withdrawn_at IS NULL AND checked_at IS NOT NULL
       ORDER BY checked_at DESC, seq DESC LIMIT 1
     `).get() as { id: string } | null;
     if (!live) return true; // проверять ещё нечем — первые пометки пройдут поштучно
     try {
-      const t: any = await this.#board.get(`/v1/posts/${live.id}`, { limit: 1 });
+      const t: any = await this.#board.get(`/v1/posts/${live.id}`, { limit: 1 }, lane);
       if (typeof t?.post?.id === 'string') return true;
     } catch { /* ниже — отказ */ }
     this.stats.canaryFailures += 1;
@@ -214,23 +260,47 @@ export class Sync {
 
   async verifyPresence(limit = 60) {
     if (!(await this.#canary())) return;
+    // Запись старше полусуток, проверенная в последние сутки, пропускается:
+    // отзыв в этом возрасте — редкость, а очередь у неё общая со свежей.
     const rows = this.#db.query(`
       SELECT seq, id FROM posts
       WHERE origin = 'board' AND withdrawn_at IS NULL
+        AND NOT (created_at < unixepoch() - $old AND checked_at IS NOT NULL AND checked_at > unixepoch() - $recheck)
       ORDER BY (checked_at IS NULL) DESC, (thread_id IS NULL) DESC, coalesce(checked_at, 0) ASC, seq DESC
-      LIMIT ?
-    `).all(limit) as { seq: number; id: string }[];
-    for (const r of rows) {
+      LIMIT $limit
+    `).all({ $old: OLD_SEC, $recheck: OLD_RECHECK_SEC, $limit: limit }) as { seq: number; id: string }[];
+    await this.#checkPresence(rows, 'archive', 4);
+  }
+
+  // Свежее окно: здесь автор ещё правит и удаляет, и здесь же отзыв заметен
+  // позже всего, если ждать общей очереди. Проверяем часто и параллельно.
+  async verifyFresh(limit = 30, minAgeSec = 120) {
+    const rows = this.#db.query(`
+      SELECT seq, id FROM posts
+      WHERE origin = 'board' AND withdrawn_at IS NULL AND created_at > unixepoch() - $fresh
+        AND (checked_at IS NULL OR checked_at < unixepoch() - $min)
+      ORDER BY coalesce(checked_at, 0) ASC, seq DESC LIMIT $limit
+    `).all({ $fresh: FRESH_SEC, $min: minAgeSec, $limit: limit }) as { seq: number; id: string }[];
+    if (!rows.length) return;
+    if (!(await this.#canary('fresh'))) return;
+    await this.#checkPresence(rows, 'fresh', 6);
+  }
+
+  async #checkPresence(rows: { seq: number; id: string }[], lane: 'fresh' | 'archive', concurrency: number) {
+    let failure: unknown = null;
+    await pool(rows, concurrency, async (r) => {
+      if (failure) return;
       try {
-        await this.#board.get(`/v1/posts/${r.id}`, { limit: 1 });
+        await this.#board.get(`/v1/posts/${r.id}`, { limit: 1 }, lane);
         markChecked(this.#db, r.seq);
       } catch (err: any) {
-        if (err?.status !== 404) throw err;
+        if (err?.status !== 404) { failure = err; return; }
         markWithdrawn(this.#db, r.seq);
         this.stats.withdrawn += 1;
       }
       this.stats.presenceChecked += 1;
-    }
+    });
+    if (failure) throw failure;
   }
 
   // Сплошной обход ленты оригинала как детектор отзыва: поштучная сверка
@@ -239,36 +309,49 @@ export class Sync {
   // отдаёт сейчас; всё, что держим мы и чего в нём нет, — кандидат на снятие,
   // подтверждаемый прямым запросом (лента могла сдвинуться во время обхода).
   // Попутно номера, которых нет у нас, добираются как разрывы.
-  async sweepPresence(intervalSec = 20 * 60) {
-    const last = Number(getMeta(this.#db, 'sweep_at') ?? 0);
+  async sweepPresence(intervalSec = 20 * 60, maxPages = Number(process.env.MIRROR_SWEEP_PAGES ?? 25)) {
     const nowSec = Math.floor(Date.now() / 1000);
-    if (nowSec - last < intervalSec) return;
+    // Круг идёт кусками и переживает шаги: непрерывный обход всего архива
+    // держал цикл десять минут и всё это время лента не читалась вовсе.
+    const saved = getMeta(this.#db, 'sweep_cursor');
+    const resuming = saved !== null && saved !== '';
+    if (!resuming) {
+      const last = Number(getMeta(this.#db, 'sweep_at') ?? 0);
+      if (nowSec - last < intervalSec) return;
+    }
     const floor = this.#minSeq();
     if (!floor) return;
     if (!(await this.#canary())) return;
     const served = new Set<number>();
     const scores = new Map<number, number>();
     const missingHere: Row[] = [];
-    let before: number | null = null;
+    let before: number | null = resuming ? Number(saved) : null;
+    // Верх окна этого куска: номер, с которого он начат. Ниже него сравнение
+    // с копией законно, выше — куском не покрыто и трогать нельзя.
+    let top = resuming ? Number(saved) - 1 : 0;
     let pages = 0;
-    let top = 0;
+    let complete = false;
+    let lowSeen = Number.MAX_SAFE_INTEGER;
     for (;;) {
       const feed: Feed = await this.#board.get('/v1/activity', { limit: 30, before });
       pages += 1;
       const items = (feed.items ?? []).map(toRow);
-      if (pages === 1 && typeof feed.newest_cursor === 'number') top = feed.newest_cursor;
+      if (pages === 1 && !resuming && typeof feed.newest_cursor === 'number') top = feed.newest_cursor;
       for (const r of items) {
         served.add(r.seq);
         scores.set(r.seq, r.score);
         if (r.seq > top) top = r.seq;
+        if (r.seq < lowSeen) lowSeen = r.seq;
       }
-      if (!items.length || !feed.next_before) break;
-      if (items[items.length - 1].seq <= floor) break;
+      if (!items.length || !feed.next_before) { complete = true; break; }
+      if (items[items.length - 1].seq <= floor) { complete = true; break; }
       before = feed.next_before;
-      if (pages > 2000) break;
+      if (pages >= maxPages) break;
     }
+    setMeta(this.#db, 'sweep_cursor', complete ? '' : String(before));
+    const low = Math.max(floor, lowSeen === Number.MAX_SAFE_INTEGER ? floor : lowSeen);
     const have = this.#db.query(`SELECT seq, id FROM posts WHERE origin = 'board' AND withdrawn_at IS NULL AND seq BETWEEN ? AND ?`)
-      .all(floor, top) as { seq: number; id: string }[];
+      .all(low, top) as { seq: number; id: string }[];
     const haveSeqs = new Set(have.map((r) => r.seq));
     // Заодно освежаем счёт: лента несёт актуальный score, а копия иначе
     // узнаёт о нём только при появлении записи.
@@ -276,30 +359,38 @@ export class Sync {
     let rescored = 0;
     this.#db.transaction(() => { for (const [seq, sc] of scores) { if (upd.run(sc, seq, sc).changes) rescored += 1; } })();
     let withdrawn = 0;
-    for (const r of have) {
-      if (served.has(r.seq)) continue;
+    let failure: unknown = null;
+    await pool(have.filter((r) => !served.has(r.seq)), 4, async (r) => {
+      if (failure) return;
       try {
         await this.#board.get(`/v1/posts/${r.id}`, { limit: 1 });
         markChecked(this.#db, r.seq); // лента сдвинулась, запись на месте
       } catch (err: any) {
-        if (err?.status !== 404) throw err;
+        if (err?.status !== 404) { failure = err; return; }
         markWithdrawn(this.#db, r.seq);
         withdrawn += 1;
       }
-    }
+    });
     // Оригинал отдаёт номера, которых нет у нас: дозагрузка тем же обходом.
     for (const seq of served) if (!haveSeqs.has(seq)) missingHere.push({ seq } as Row);
-    if (missingHere.length) {
+    if (missingHere.length && !failure) {
       // Полные строки уже прошли мимо; повторно пройдём только нужные окна.
-      for (const gap of missingHere.slice(0, 30)) {
-        const feed: Feed = await this.#board.get('/v1/activity', { limit: 1, before: gap.seq + 1 });
-        const hit = (feed.items ?? []).map(toRow).find((r) => r.seq === gap.seq);
-        if (hit) { upsertRows(this.#db, [hit]); this.stats.gapsFilled += 1; }
-      }
+      await pool(missingHere.slice(0, 30), 4, async (gap) => {
+        if (failure) return;
+        try {
+          const feed: Feed = await this.#board.get('/v1/activity', { limit: 1, before: gap.seq + 1 });
+          const hit = (feed.items ?? []).map(toRow).find((r) => r.seq === gap.seq);
+          if (hit) { upsertRows(this.#db, [hit]); this.stats.gapsFilled += 1; }
+        } catch (err) { failure = err; }
+      });
     }
-    setMeta(this.#db, 'sweep_at', String(nowSec));
-    this.stats.sweep = { at: nowSec, pages, top, floor, served: served.size, withdrawn, refetched: Math.min(missingHere.length, 30), rescored };
+    // Круг засчитывается только пройденным до конца: иначе следующий шаг
+    // продолжит с курсора, а не начнёт сначала по интервалу.
+    if (complete) setMeta(this.#db, 'sweep_at', String(nowSec));
+    this.stats.sweep = { at: nowSec, pages, top, floor, served: served.size, withdrawn,
+      refetched: Math.min(missingHere.length, 30), rescored, complete, cursor: complete ? null : before };
     this.stats.withdrawn += withdrawn;
+    if (failure) throw failure;
   }
 
   // Карма: по агенту за запрос, поэтому обновляем самых свежих и тех, у кого
@@ -333,18 +424,36 @@ export class Sync {
   }
 
   // Каждая фаза сама по себе: отказ одной не должен прятать остальные.
+  #errors: string[] = [];
+
   async #phase(name: string, fn: () => Promise<unknown>) {
     try { await fn(); }
     catch (err) {
       const msg = `${name}: ${(err as Error).message}`;
+      this.#errors.push(msg);
       this.stats.lastError = [this.stats.lastError, msg].filter(Boolean).join('; ');
       console.error('синк', msg);
     }
   }
 
-  async tick() {
-    try {
-      this.stats.lastError = '';
+  // Ошибки считаются по проходу: у свежего и архивного шагов теперь разный
+  // темп, и одна общая строка either прятала бы свежую ошибку, either
+  // показывала бы архивную как текущую.
+  async #run(kind: 'fresh' | 'archive', body: () => Promise<void>) {
+    this.#errors = [];
+    try { await body(); }
+    finally {
+      const joined = this.#errors.join('; ');
+      if (kind === 'fresh') this.stats.freshError = joined; else this.stats.archiveError = joined;
+      this.stats.lastError = [this.stats.freshError, this.stats.archiveError].filter(Boolean).join('; ');
+    }
+  }
+
+  // Свежий шаг: всё, что решает, попадёт ли к нам запись, живущая минуты.
+  // Ходит часто, работает мало и никогда не ждёт архивных фаз — раньше они
+  // стояли в одной очереди, и обход архива отодвигал ленту на минуты.
+  async tickFresh() {
+    await this.#run('fresh', async () => {
       // Досылка идёт первой: запись, принятая вместо оригинала, ждёт дольше
       // всех остальных фаз и её автор ждёт вместе с ней.
       if (this.#ctx) {
@@ -352,6 +461,18 @@ export class Sync {
         await this.#phase('досылка', async () => { this.stats.forwarded += await flushOutbox(ctx); });
       }
       await this.#phase('лента', () => this.pullNew());
+      await this.#phase('свежие тела', () => this.fetchFreshBodies());
+      await this.#phase('свежее присутствие', () => this.verifyFresh());
+    });
+    this.stats.freshTick = Math.floor(Date.now() / 1000);
+    this.stats.lastTick = this.stats.freshTick;
+    setMeta(this.#db, 'last_tick', String(this.stats.lastTick));
+  }
+
+  // Архивный шаг: полнота и сверка того, что уже устоялось. Может занимать
+  // минуты — на свежесть это больше не влияет.
+  async tickArchive() {
+    await this.#run('archive', async () => {
       await this.#phase('история', () => this.backfillStep());
       await this.#phase('дыры', () => this.fillGaps());
       await this.#phase('тела', () => this.fetchBodies());
@@ -365,9 +486,13 @@ export class Sync {
         await this.#phase('голоса', async () => { this.stats.votes += await syncVotes(ctx); });
         await this.#phase('meatproxy', async () => { this.stats.meatproxy += await warmMeatproxy(ctx); });
       }
-    } finally {
-      this.stats.lastTick = Math.floor(Date.now() / 1000);
-      setMeta(this.#db, 'last_tick', String(this.stats.lastTick));
-    }
+    });
+    this.stats.archiveTick = Math.floor(Date.now() / 1000);
+  }
+
+  // Полный проход одним вызовом: первый запуск и тесты.
+  async tick() {
+    await this.tickFresh();
+    await this.tickArchive();
   }
 }

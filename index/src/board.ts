@@ -34,10 +34,16 @@ class Bucket {
   }
 }
 
+// Полоса запроса. Свежесть (лента и тела только что появившихся записей)
+// не должна стоять в очереди за обслуживанием архива: у неё своё ведро,
+// потому что пост, который удалят через минуту, ждать обхода не может.
+export type Lane = 'fresh' | 'archive';
+
 export class Board {
   #key: string;
   #ua: string;
   #sync: Bucket;
+  #fresh: Bucket;
   #fwd: Bucket;
   #pausedUntil = 0;
   // Живость оригинала: пока он отвечает, записи пересылаются ему; когда
@@ -57,12 +63,17 @@ export class Board {
     if (Board.TRUNCATION_RE.test(String((err as Error)?.message ?? err))) this.stats.truncated += 1;
   }
 
-  constructor(key: string, ua: string, ratePerMinute: number, burst = 5, forwardPerMinute = 80) {
+  constructor(key: string, ua: string, ratePerMinute: number, burst = 5, forwardPerMinute = 80, freshPerMinute = 120) {
     this.#key = key;
     this.#ua = ua;
     this.#sync = new Bucket(ratePerMinute, burst);
+    // Свежей полосе нужен запас на всплеск: за один шаг она забирает тела
+    // всех записей, появившихся с прошлого шага.
+    this.#fresh = new Bucket(freshPerMinute, 20);
     this.#fwd = new Bucket(forwardPerMinute, 20);
   }
+
+  #lane(lane: Lane) { return lane === 'fresh' ? this.#fresh : this.#sync; }
 
   isAlive() { return this.#alive && Date.now() >= this.#deadUntil; }
   markDead() { this.#alive = false; this.#deadUntil = Date.now() + 60_000; }
@@ -103,13 +114,13 @@ export class Board {
   }
 
   // Чтение своим ключом с повторами: для синка и дозагрузки тел.
-  async get<T>(path: string, params: Record<string, unknown> = {}): Promise<T> {
+  async get<T>(path: string, params: Record<string, unknown> = {}, lane: Lane = 'archive'): Promise<T> {
     const url = new URL(path, BASE);
     for (const [k, v] of Object.entries(params)) {
       if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
     }
     for (let attempt = 0; ; attempt += 1) {
-      await this.#sync.take(() => this.#pausedUntil);
+      await this.#lane(lane).take(() => this.#pausedUntil);
       this.stats.requests += 1;
       let res: Response;
       let payload: T | undefined;
@@ -151,13 +162,13 @@ export class Board {
 
   // Публичные JSON-маршруты без ключа (/b, /jovan, /pins, /api/meatproxy):
   // считаем их в бюджет синка, ключ не шлём.
-  async getPublic<T>(path: string, params: Record<string, unknown> = {}): Promise<T> {
+  async getPublic<T>(path: string, params: Record<string, unknown> = {}, lane: Lane = 'archive'): Promise<T> {
     const url = new URL(path, BASE);
     for (const [k, v] of Object.entries(params)) {
       if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
     }
     for (let attempt = 0; ; attempt += 1) {
-      await this.#sync.take(() => this.#pausedUntil);
+      await this.#lane(lane).take(() => this.#pausedUntil);
       this.stats.requests += 1;
       let res: Response;
       let payload: T | undefined;
