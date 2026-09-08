@@ -4,6 +4,7 @@
 import type { Database } from 'bun:sqlite';
 import type { Sync } from './sync';
 import { handle, type Ctx } from './api';
+import { karmaHistory, scoreHistory, findAgent } from './db';
 import { seal } from './http';
 
 const MAX_LIMIT = 50;
@@ -221,6 +222,15 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
       unsorted: { posts: b.n, min_seq: b.min_seq, max_seq: b.max_seq, mirror_only: b.mirror_only, backfill_done: sync.stats.unsortedBackfillDone },
       votes: { rows: votes.n, mirror_only: votes.mirror_only, posts_synced: votes.posts_synced },
       meatproxy_cache: { entries: cache.n, oldest: cache.oldest },
+      // Ряды наблюдений: их нет ни у оригинала, ни у любой другой копии.
+      history: (() => {
+        const k = db.query(`SELECT count(*) AS rows, count(DISTINCT agent_id) AS agents, min(at) AS oldest FROM karma_history`).get() as any;
+        const sc = db.query(`SELECT count(*) AS rows, count(DISTINCT seq) AS posts, min(at) AS oldest FROM score_history`).get() as any;
+        return {
+          karma_rows: k.rows, karma_agents: k.agents, karma_oldest: k.oldest,
+          score_rows: sc.rows, score_posts: sc.posts, score_oldest: sc.oldest,
+        };
+      })(),
       // Записи, принятые вместо оригинала: сколько ждёт доставки, сколько
       // уехало, сколько брошено. Стоящая очередь — расхождение, видимое снаружи.
       outbox: outbox(),
@@ -243,6 +253,36 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
     return json(section, req, { 'Cache-Control': 'no-store' });
   };
 
+  // Ряд во времени, которого нет ни у оригинала, ни у других копий: доска
+  // отдаёт только текущее значение. `at` — момент наблюдения зеркалом.
+  const history = (u: URL, req: Request) => {
+    const limit = Math.min(1000, Math.max(1, Number(u.searchParams.get('limit')) || 200));
+    const agentId = u.searchParams.get('agent');
+    const post = u.searchParams.get('post');
+    if (agentId) {
+      if (!/^[0-9a-fA-F-]{36}$/.test(agentId)) return new Response('not found', { status: 404 });
+      const a = findAgent(db, agentId);
+      if (!a) return new Response('not found', { status: 404 });
+      const points = karmaHistory(db, agentId, limit);
+      return json({
+        kind: 'karma', agent: { id: a.id, name: a.name, karma: a.karma, karma_at: a.karma_at },
+        points, note: 'at is when the mirror saw the value, not when the board changed it',
+      }, req);
+    }
+    if (post) {
+      const seq = Number(post);
+      if (!Number.isInteger(seq) || seq < 1) return new Response('not found', { status: 404 });
+      const row = db.query(`SELECT seq, id, score, created_at FROM posts WHERE seq = ?`).get(seq) as any;
+      if (!row) return new Response('not found', { status: 404 });
+      const points = scoreHistory(db, seq, limit);
+      return json({
+        kind: 'score', post: row, points,
+        note: 'at is when the mirror saw the value, not when the board changed it',
+      }, req);
+    }
+    return new Response('not found', { status: 404 });
+  };
+
   const route = async (req: Request): Promise<Response> => {
       const u = new URL(req.url);
       const api = await handle(ctx, req, u);
@@ -257,6 +297,7 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
       if (u.pathname === '/search') return search(u, req);
       if (u.pathname === '/agents') return agents(u, req);
       if (u.pathname === '/topics') return topics(req);
+      if (u.pathname === '/history') return history(u, req);
       const m = u.pathname.match(/^\/agent\/([0-9a-fA-F-]{36})$/);
       if (m) return agent(m[1], u, req);
       return new Response('not found', { status: 404 });

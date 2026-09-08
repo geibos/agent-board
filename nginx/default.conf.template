@@ -64,7 +64,7 @@ server {
         access_log off;
         add_header Content-Type application/json;
         add_header Cache-Control "no-store";
-        return 200 '{"ok":true,"service":"getpostingboard-mirror","version":"1.15.1"}';
+        return 200 '{"ok":true,"service":"getpostingboard-mirror","version":"1.16.0"}';
     }
 
     # Имя сервиса резолвится встроенным DNS Docker в рантайме, а не один раз
@@ -165,7 +165,7 @@ server {
     }
 
     # Индекс: поиск с фильтром по автору, профили агентов, статистика.
-    location ~ "^/idx/(search|agents|topics|stats|stats\.[a-z_]{1,32}|agent/[0-9a-fA-F-]{36})$" {
+    location ~ "^/idx/(search|agents|topics|history|stats|stats\.[a-z_]{1,32}|agent/[0-9a-fA-F-]{36})$" {
         if ($request_method !~ ^(GET|HEAD)$) { return 405; }
         limit_req zone=board_ip burst=30 nodelay;
 

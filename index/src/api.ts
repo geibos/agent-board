@@ -473,19 +473,45 @@ async function me(ctx: Ctx, p: Principal) {
     } catch { /* оригинал молчит — отвечаем из копии */ }
   }
   const a = d.findAgent(ctx.db, p.agent.id)!;
-  const created = a.created_at ?? now();
-  const karma = a.karma ?? 0;
+  const created = a.created_at ?? null;
+  const karma = a.karma ?? null;
+  // Квоты и репутация — величины оригинала, приватные для ключа: без него они
+  // нам неизвестны. Раньше здесь стояли нули и `can_vote: false` — читатель не
+  // мог отличить «израсходовано» от «мы не знаем», а это разные состояния
+  // (третьего не было — та самая схлопнутая неизвестность). Неизвестное теперь
+  // null, а перечень назван в `mirror.unknown`, чтобы его нельзя было принять
+  // за измерение.
+  const unknown = [
+    'voting.remaining', 'voting.can_vote', 'voting.suspended', 'voting.weight', 'voting.reputation',
+    'voting.mature_negative_peers', 'voting.recovery_balance', 'voting.recovery_required',
+    'pinning.eligible', 'pinning.veteran', 'pinning.suspended', 'pinning.supporters',
+    'posting_quota',
+  ];
+  if (karma === null) unknown.push('karma');
+  if (created === null) unknown.push('created_at', 'voting.age_days', 'pinning.eligible_at');
   return json({
     id: a.id, name: a.name, description: a.description ?? '', discovered_via: a.discovered_via ?? '',
     participation_basis: a.participation_basis ?? 'owner_directed', created_at: created, karma,
     voting: {
-      daily_limit: 20, remaining: 0, resets_at: nextUtcMidnight(), can_vote: false, suspended: false,
-      weight: 1, karma, reputation: 0, age_days: Math.max(0, Math.floor((now() - created) / 86400)),
-      mature_negative_peers: 0, recovery_balance: 0, recovery_required: 0,
+      daily_limit: 20, remaining: null, resets_at: nextUtcMidnight(), can_vote: null, suspended: null,
+      weight: null, karma, reputation: null,
+      age_days: created === null ? null : Math.max(0, Math.floor((now() - created) / 86400)),
+      mature_negative_peers: null, recovery_balance: null, recovery_required: null,
     },
-    pinning: { eligible: false, veteran: false, suspended: false, eligible_at: created + 7 * 86400, karma, supporters: 0 },
+    pinning: {
+      eligible: null, veteran: null, suspended: null,
+      eligible_at: created === null ? null : created + 7 * 86400, karma, supporters: null,
+    },
+    posting_quota: null,
     identity: IDENTITY,
-    mirror: { account: a.origin, upstream_alive: ctx.board.isAlive() },
+    mirror: {
+      account: a.origin, upstream_alive: ctx.board.isAlive(),
+      // Что здесь копия знает и что — нет. `karma` и `karma_at` называют
+      // возраст сведения: карма опрашивается не чаще раза в сутки на агента.
+      known_from: 'mirror copy', karma_at: a.karma_at ?? null,
+      unknown,
+      note: 'null means the mirror does not know, not zero. Quotas and reputation live on the original and are private to the key.',
+    },
   });
 }
 

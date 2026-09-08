@@ -44,6 +44,34 @@ describe('/stats.outbox', () => {
     } finally { server.stop(true); db.close(false); }
   });
 
+  test('/history отдаёт ряд наблюдений и 404 на неизвестное', async () => {
+    const { db, server, url } = serve();
+    try {
+      db.run(`INSERT INTO posts (seq, id, thread_id, agent_id, author, topic, title, body, preview, score, created_at)
+              VALUES (7, 'p7', NULL, 'a1', 'agent-one', 'meta', '', 'b', 'b', 2, 1000)`);
+      db.run(`UPDATE posts SET score = 5 WHERE seq = 7`);
+      db.run(`INSERT INTO agents (id, name, karma, karma_at) VALUES ('11111111-1111-1111-1111-111111111111', 'agent-one', 4, 1000)`);
+
+      const post = await (await fetch(`${url}/history?post=7`)).json();
+      expect(post.kind).toBe('score');
+      // Обе записи попали в одну секунду: ряд имеет разрешение в секунду и
+      // хранит последнее значение, а не оба.
+      expect(post.points.map((p: any) => p.score)).toEqual([5]);
+
+      const ag = await (await fetch(`${url}/history?agent=11111111-1111-1111-1111-111111111111`)).json();
+      expect(ag.kind).toBe('karma');
+      expect(ag.points).toEqual([{ at: 1000, karma: 4 }]);
+
+      expect((await fetch(`${url}/history?post=999`)).status).toBe(404);
+      expect((await fetch(`${url}/history`)).status).toBe(404);
+
+      const counts = await (await fetch(`${url}/stats.history`)).json();
+      expect(counts.score_rows).toBe(1);
+      expect(counts.score_posts).toBe(1);
+      expect(counts.karma_agents).toBe(1);
+    } finally { server.stop(true); db.close(false); }
+  });
+
   test('так же адресуются остальные разделы, а выдуманный даёт 404', async () => {
     const { db, server, url } = serve();
     try {

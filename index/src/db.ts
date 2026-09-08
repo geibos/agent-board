@@ -246,6 +246,61 @@ function migrate(db: Database) {
   addColumn(db, 'agents', 'created_at', 'INTEGER');
   addColumn(db, 'agents', 'origin', `TEXT NOT NULL DEFAULT 'board'`);
 
+  // История. Оригинал отдаёт «сейчас»: карма агента и счёт записи там всегда
+  // одно число, ряда во времени нет нигде — а он существовал бы у нас даром,
+  // потому что карму мы и так опрашиваем, а счёт приходит с лентой. Строка
+  // пишется только когда значение изменилось; `at` — когда зеркало увидело
+  // изменение, а не когда оно случилось на доске. Разрешение ряда — секунда:
+  // два изменения внутри одной секунды дают одну точку, последнюю.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS karma_history (
+      agent_id TEXT NOT NULL, at INTEGER NOT NULL, karma INTEGER NOT NULL,
+      PRIMARY KEY (agent_id, at)
+    );
+    CREATE TABLE IF NOT EXISTS score_history (
+      seq INTEGER NOT NULL, at INTEGER NOT NULL, score INTEGER NOT NULL,
+      PRIMARY KEY (seq, at)
+    );
+    CREATE INDEX IF NOT EXISTS score_history_at ON score_history(at);
+  `);
+  // Триггерами, а не вызовами из кода: путей записи несколько (лента,
+  // локальная запись, переезд доставленного поста), и забытый вызов
+  // означал бы дыру в ряде, которую потом ничем не восстановить.
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS karma_history_ins AFTER INSERT ON agents
+    WHEN new.karma IS NOT NULL
+    BEGIN INSERT INTO karma_history (agent_id, at, karma)
+          VALUES (new.id, coalesce(new.karma_at, unixepoch()), new.karma)
+          ON CONFLICT(agent_id, at) DO UPDATE SET karma = excluded.karma; END;
+
+    CREATE TRIGGER IF NOT EXISTS karma_history_upd AFTER UPDATE OF karma ON agents
+    WHEN new.karma IS NOT NULL AND (old.karma IS NULL OR new.karma <> old.karma)
+    BEGIN INSERT INTO karma_history (agent_id, at, karma)
+          VALUES (new.id, coalesce(new.karma_at, unixepoch()), new.karma)
+          ON CONFLICT(agent_id, at) DO UPDATE SET karma = excluded.karma; END;
+
+    CREATE TRIGGER IF NOT EXISTS score_history_ins AFTER INSERT ON posts
+    BEGIN INSERT INTO score_history (seq, at, score)
+          VALUES (new.seq, coalesce(new.seen_at, unixepoch()), new.score)
+          ON CONFLICT(seq, at) DO UPDATE SET score = excluded.score; END;
+
+    CREATE TRIGGER IF NOT EXISTS score_history_upd AFTER UPDATE OF score ON posts
+    WHEN new.score <> old.score
+    BEGIN INSERT INTO score_history (seq, at, score)
+          VALUES (new.seq, unixepoch(), new.score)
+          ON CONFLICT(seq, at) DO UPDATE SET score = excluded.score; END;
+  `);
+  // Первая точка ряда для того, что уже лежит в копии: без неё история
+  // началась бы с первого изменения, а не с известного значения.
+  if (!(db.query(`SELECT count(*) AS n FROM karma_history`).get() as { n: number }).n) {
+    db.exec(`INSERT OR IGNORE INTO karma_history (agent_id, at, karma)
+             SELECT id, coalesce(karma_at, unixepoch()), karma FROM agents WHERE karma IS NOT NULL`);
+  }
+  if (!(db.query(`SELECT count(*) AS n FROM score_history`).get() as { n: number }).n) {
+    db.exec(`INSERT OR IGNORE INTO score_history (seq, at, score)
+             SELECT seq, coalesce(seen_at, created_at), score FROM posts`);
+  }
+
   // FTS5 поверх posts: content='posts' хранит только индекс, тексты берутся
   // из основной таблицы по rowid = seq.
   const hasFts = db.query(
@@ -334,6 +389,23 @@ export function setKarma(db: Database, id: string, name: string, karma: number |
     INSERT INTO agents (id, name, karma, karma_at) VALUES (?, ?, ?, unixepoch())
     ON CONFLICT(id) DO UPDATE SET name = excluded.name, karma = excluded.karma, karma_at = excluded.karma_at
   `).run(id, name, karma);
+}
+
+// Ряд наблюдений: последние точки в хронологическом порядке. `at` — момент,
+// когда зеркало увидело значение, а не когда оно изменилось на доске: между
+// двумя опросами карма могла сходить вверх и вернуться, и мы этого не знаем.
+export function karmaHistory(db: Database, agentId: string, limit = 200) {
+  const rows = db.query(
+    `SELECT at, karma FROM karma_history WHERE agent_id = ? ORDER BY at DESC LIMIT ?`,
+  ).all(agentId, limit) as { at: number; karma: number }[];
+  return rows.reverse();
+}
+
+export function scoreHistory(db: Database, seq: number, limit = 200) {
+  const rows = db.query(
+    `SELECT at, score FROM score_history WHERE seq = ? ORDER BY at DESC LIMIT ?`,
+  ).all(seq, limit) as { at: number; score: number }[];
+  return rows.reverse();
 }
 
 export const maxSeq = (db: Database): number =>

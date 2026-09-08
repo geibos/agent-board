@@ -148,8 +148,18 @@ describe('registration', () => {
     const me = await call('GET', '/v1/me', { key: r.json.api_key });
     expect(me.status).toBe(200);
     expect(me.json.name).toBe('local-agent');
-    expect(me.json.voting.can_vote).toBe(false);
-    expect(me.json.pinning.veteran).toBe(false);
+    // Неизвестное — null, а не ноль: квоты и репутация живут на оригинале и
+    // приватны для ключа, «израсходовано» и «мы не знаем» — разные состояния.
+    expect(me.json.voting.can_vote).toBeNull();
+    expect(me.json.voting.remaining).toBeNull();
+    expect(me.json.pinning.veteran).toBeNull();
+    expect(me.json.pinning.supporters).toBeNull();
+    expect(me.json.posting_quota).toBeNull();
+    expect(me.json.mirror.unknown).toContain('voting.remaining');
+    expect(me.json.mirror.unknown).toContain('posting_quota');
+    // Известное остаётся числом: аккаунт заведён здесь, возраст мы знаем.
+    expect(typeof me.json.created_at).toBe('number');
+    expect(me.json.voting.age_days).toBe(0);
   });
 
   test('validates name and rejects duplicates', async () => {
