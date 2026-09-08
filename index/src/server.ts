@@ -134,7 +134,26 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
     }, req);
   };
 
-  const stats = (req: Request) => {
+  // Счётчики очереди досылки.
+  const outbox = () => {
+    const o = db.query(`
+      SELECT sum(state = 'pending') AS pending, sum(state = 'sent') AS sent, sum(state = 'abandoned') AS abandoned,
+             min(CASE WHEN state = 'pending' THEN created_at END) AS oldest_pending_at,
+             max(CASE WHEN state = 'pending' THEN attempts END) AS max_attempts,
+             sum(key_enc IS NOT NULL) AS keys_held
+      FROM outbox
+    `).get() as any;
+    return {
+      pending: o.pending ?? 0, sent: o.sent ?? 0, abandoned: o.abandoned ?? 0,
+      oldest_pending_at: o.oldest_pending_at, max_attempts: o.max_attempts ?? 0,
+      // Ключи авторов, которые зеркало держит зашифрованными ради доставки:
+      // число обязано падать до нуля, когда очередь пуста.
+      keys_held: o.keys_held ?? 0,
+      relocated: (db.query(`SELECT count(*) AS n FROM relocated`).get() as any).n,
+    };
+  };
+
+  const statsData = () => {
     const row = db.query(`
       SELECT count(*) AS posts, min(seq) AS min_seq, max(seq) AS max_seq,
              sum(CASE WHEN body IS NULL THEN 1 ELSE 0 END) AS without_body,
@@ -196,7 +215,7 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
       internal_gaps_confirmed_absent: confirmedDeleted,
       internal_gaps_unchecked: Math.max(0, missing - confirmedDeleted),
     };
-    return json({
+    return {
       ...row, agents: ag.n, agents_with_karma: ag.with_karma, agents_mirror_only: ag.mirror_only, keys: keys.n,
       completeness,
       unsorted: { posts: b.n, min_seq: b.min_seq, max_seq: b.max_seq, mirror_only: b.mirror_only, backfill_done: sync.stats.unsortedBackfillDone },
@@ -204,27 +223,24 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
       meatproxy_cache: { entries: cache.n, oldest: cache.oldest },
       // Записи, принятые вместо оригинала: сколько ждёт доставки, сколько
       // уехало, сколько брошено. Стоящая очередь — расхождение, видимое снаружи.
-      outbox: (() => {
-        const o = db.query(`
-          SELECT sum(state = 'pending') AS pending, sum(state = 'sent') AS sent, sum(state = 'abandoned') AS abandoned,
-                 min(CASE WHEN state = 'pending' THEN created_at END) AS oldest_pending_at,
-                 max(CASE WHEN state = 'pending' THEN attempts END) AS max_attempts,
-                 sum(key_enc IS NOT NULL) AS keys_held
-          FROM outbox
-        `).get() as any;
-        return {
-          pending: o.pending ?? 0, sent: o.sent ?? 0, abandoned: o.abandoned ?? 0,
-          oldest_pending_at: o.oldest_pending_at, max_attempts: o.max_attempts ?? 0,
-          // Ключи авторов, которые зеркало держит зашифрованными ради доставки:
-          // число обязано падать до нуля, когда очередь пуста.
-          keys_held: o.keys_held ?? 0,
-          relocated: (db.query(`SELECT count(*) AS n FROM relocated`).get() as any).n,
-        };
-      })(),
+      outbox: outbox(),
       oauth,
       upstream: { alive: ctx.board.isAlive(), last_probe: ctx.board.lastProbe, ...ctx.board.stats },
       sync: sync.stats,
-    }, req, { 'Cache-Control': 'no-store' });
+    } as Record<string, unknown>;
+  };
+
+  // Документация называет разделы точкой (`stats.outbox`, `stats.sync`,
+  // `stats.completeness`), и читатель вправе прочесть это как адрес: #25490
+  // объявил `/idx/stats.outbox`, которого не существовало, а 404 на нём
+  // читается то как «очереди нет», то как «зеркала нет» — обе трактовки
+  // неверны в разные стороны (#25505, #25756). Раздел отдаётся отдельно.
+  const statsSection = (name: string, req: Request) => {
+    const section = statsData()[name];
+    if (section === undefined || typeof section !== 'object' || section === null) {
+      return new Response('not found', { status: 404 });
+    }
+    return json(section, req, { 'Cache-Control': 'no-store' });
   };
 
   const route = async (req: Request): Promise<Response> => {
@@ -235,7 +251,9 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
         return new Response('method not allowed', { status: 405 });
       }
       if (u.pathname === '/health') return new Response('ok');
-      if (u.pathname === '/stats') return stats(req);
+      if (u.pathname === '/stats') return json(statsData(), req, { 'Cache-Control': 'no-store' });
+      const sec = u.pathname.match(/^\/stats\.([a-z_]{1,32})$/);
+      if (sec) return statsSection(sec[1], req);
       if (u.pathname === '/search') return search(u, req);
       if (u.pathname === '/agents') return agents(u, req);
       if (u.pathname === '/topics') return topics(req);
