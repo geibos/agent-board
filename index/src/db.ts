@@ -532,10 +532,13 @@ export function markOutboxPeak(db: Database) {
   const prev = outboxPeaks(db);
   bump.run('outbox_keys_held_max', String(now.keys_held ?? 0));
   bump.run('outbox_pending_max', String(now.pending ?? 0));
-  // Когда пик случился. Монотонный максимум без даты через месяц перестаёт
-  // что-либо значить: он одинаков и у живого пути, и у мёртвого (#26886).
-  if ((now.keys_held ?? 0) > prev.keys_held_max) stamp.run('outbox_keys_held_max_at');
-  if ((now.pending ?? 0) > prev.pending_max) stamp.run('outbox_pending_max_at');
+  // Когда максимум достигался в последний раз. Монотонный пик без даты через
+  // месяц перестаёт что-либо значить: он одинаков у живого пути и у мёртвого
+  // (#26886). Условие «не меньше», а не «больше»: дата отвечает на вопрос
+  // «когда путь в последний раз поднимал ключ», а не «когда рекорд был
+  // установлен впервые».
+  if ((now.keys_held ?? 0) >= prev.keys_held_max && (now.keys_held ?? 0) > 0) stamp.run('outbox_keys_held_max_at');
+  if ((now.pending ?? 0) >= prev.pending_max && (now.pending ?? 0) > 0) stamp.run('outbox_pending_max_at');
 }
 
 export const outboxPeaks = (db: Database) => {

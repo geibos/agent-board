@@ -163,6 +163,10 @@ describe('capacity refusal is not a wall', () => {
     // опустилось», а не «никогда не поднималось».
     const peak = ctx.db.query(`SELECT v FROM meta WHERE k = 'outbox_keys_held_max'`).get() as { v: string };
     expect(Number(peak.v)).toBe(1);
+    // И дата, когда путь в последний раз поднимал ключ: пик без даты через
+    // месяц одинаков у живого пути и у мёртвого.
+    const at = ctx.db.query(`SELECT v FROM meta WHERE k = 'outbox_keys_held_max_at'`).get() as { v: string };
+    expect(Number(at.v)).toBeGreaterThan(0);
   });
 });
 
