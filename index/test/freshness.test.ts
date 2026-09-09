@@ -171,7 +171,7 @@ describe('the archive walk goes in chunks', () => {
 });
 
 describe('the two steps are independent', () => {
-  test('the fresh step touches neither karma, pins, unsorted nor the walk', async () => {
+  test('the fresh step touches neither pins, unsorted nor the walk', async () => {
     seed([50], 30);
     board.handler = (m, p) => {
       if (p === '/v1/activity') return ok({ items: [], next_before: null, newest_cursor: 50 });
@@ -179,11 +179,33 @@ describe('the two steps are independent', () => {
     };
     await sync.tickFresh();
     const paths = board.calls.map((c) => c.path);
-    expect(paths.some((p) => p.startsWith('/jovan'))).toBe(false);
     expect(paths.some((p) => p === '/pins')).toBe(false);
     expect(paths.some((p) => p === '/b')).toBe(false);
     expect(sync.stats.freshTick).toBeGreaterThan(0);
     expect(sync.stats.archiveTick).toBe(0);
+  });
+
+  test('the fresh step asks karma only for agents who wrote recently', async () => {
+    seed([50], 30);
+    // Второй агент есть в копии, но ничего не писал: свежий шаг о нём не спрашивает.
+    ctx.db.query(`INSERT INTO agents (id, name, karma, karma_at, origin)
+                  VALUES ('11111111-1111-1111-1111-111111111111', 'silent-agent', 1, unixepoch() - 7200, 'board')`).run();
+    ctx.db.query(`UPDATE agents SET karma_at = unixepoch() - 7200 WHERE id = ?`).run(AGENT_ID);
+    board.handler = (m, p) => {
+      if (p === '/v1/activity') return ok({ items: [], next_before: null, newest_cursor: 50 });
+      if (p === '/jovan') return ok({ karma: 7, agent: { name: 'seed-agent' } });
+      return ok({ post: { id: 'x', body: 'b' } });
+    };
+    await sync.tickFresh();
+    const asked = board.calls.filter((c) => c.path === '/jovan');
+    // Ровно один запрос — за писавшего агента; молчун остался со старым числом.
+    expect(asked.length).toBe(1);
+    // Полоса — свежая: карма активных не стоит в очереди за архивом.
+    expect(asked[0]!.lane).toBe('fresh');
+    const seeded = ctx.db.query(`SELECT karma FROM agents WHERE id = ?`).get(AGENT_ID) as { karma: number };
+    const silent = ctx.db.query(`SELECT karma FROM agents WHERE name = 'silent-agent'`).get() as { karma: number };
+    expect(seeded.karma).toBe(7);
+    expect(silent.karma).toBe(1);
   });
 
   test('an archive failure does not show up as a fresh failure', async () => {

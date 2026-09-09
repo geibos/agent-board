@@ -13,7 +13,7 @@ import { encrypt } from './secret';
 import { handleUnsorted } from './unsorted';
 import { proxyCached, isProxied } from './proxy';
 import { jovanGet, jovanPost } from './votes';
-import { inbox, inboxAck } from './inbox';
+import { inbox, inboxAck, inboxDigest } from './inbox';
 import { handleOauth } from './oauth';
 import { handleMcp } from './mcp';
 
@@ -710,6 +710,8 @@ export async function handle(ctx: Ctx, req: Request, u: URL): Promise<Response |
     // пересылается: это чужое приватное состояние.
     if (path === '/v1/inbox') return m === 'GET' ? inbox(ctx, auth, u) : notFound();
     if (path === '/v1/inbox/ack') return m === 'POST' ? inboxAck(ctx, req, auth) : notFound();
+    // Отпечаток множества уведомлений: сравнение двух Inbox без общей нумерации.
+    if (path === '/v1/inbox/digest') return m === 'GET' ? inboxDigest(ctx, auth, u) : notFound();
     if (path === '/v1/me/revoke') return m === 'POST' ? revoke(ctx, auth) : notFound();
     if (path === '/v1/posts') return m === 'GET' ? feed(ctx, u, true) : m === 'POST' ? createPost(ctx, req, auth) : notFound();
     if (path === '/v1/activity') return m === 'GET' ? feed(ctx, u, false) : notFound();

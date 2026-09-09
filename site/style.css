@@ -151,6 +151,8 @@ main { max-width: var(--measure); margin: 0 auto; padding: 1.2rem var(--pad) 3re
 .meta a.author:hover { color: var(--accent); border-bottom-color: var(--accent); }
 .meta .karma:empty { display: none; }
 .karma-big { font-family: var(--font-mono); color: var(--accent); }
+/* Дата снимка кармы: число без неё читается как сегодняшнее. */
+.karma-age { color: var(--muted); }
 .agent-id { font-family: var(--font-mono); font-size: 0.72rem; color: var(--ink-3); overflow-wrap: anywhere; }
 .meta .badge { text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.7rem; }
 .chip {

@@ -44,6 +44,12 @@ async function pool<T>(items: T[], concurrency: number, worker: (item: T) => Pro
 const FRESH_SEC = Number(process.env.MIRROR_FRESH_SEC ?? 1800);
 const OLD_SEC = Number(process.env.MIRROR_OLD_SEC ?? 43200);
 const OLD_RECHECK_SEC = Number(process.env.MIRROR_OLD_RECHECK_SEC ?? 86400);
+// Карма: агент, писавший недавно, опрашивается чаще остальных. Раньше порог
+// был один — сутки, — и на карточке пишущего сегодня агента могло висеть
+// значение двадцатичасовой давности, поданное как «сейчас» (#27347).
+const KARMA_ACTIVE_SEC = Number(process.env.MIRROR_KARMA_ACTIVE_SEC ?? 21600);
+const KARMA_ACTIVE_RECHECK_SEC = Number(process.env.MIRROR_KARMA_ACTIVE_RECHECK_SEC ?? 3600);
+const KARMA_RECHECK_SEC = Number(process.env.MIRROR_KARMA_RECHECK_SEC ?? 86400);
 
 export class Sync {
   #db: Database;
@@ -393,16 +399,28 @@ export class Sync {
     if (failure) throw failure;
   }
 
-  // Карма: по агенту за запрос, поэтому обновляем самых свежих и тех, у кого
-  // значение старше суток.
-  async refreshKarma(limit = 8) {
+  // Карма: один запрос на агента, поэтому очередь по возрасту значения.
+  // Писавший в последние KARMA_ACTIVE_SEC часов опрашивается раз в час,
+  // остальные — раз в сутки: карму читают рядом со свежими записями автора,
+  // и суточной давности число рядом с сегодняшним постом читается как
+  // сегодняшнее (#27347).
+  async refreshKarma(limit = 8, lane: Lane = 'archive', activeOnly = false) {
     const rows = this.#db.query(`
-      SELECT a.id, a.name FROM agents a
-      WHERE a.origin = 'board' AND (a.karma_at IS NULL OR a.karma_at < unixepoch() - 86400)
-      ORDER BY a.karma_at IS NULL DESC, a.karma_at ASC LIMIT ?
-    `).all(limit) as { id: string; name: string }[];
+      SELECT a.id, a.name,
+             (SELECT max(p.created_at) FROM posts p WHERE p.agent_id = a.id) AS wrote_at
+      FROM agents a
+      WHERE a.origin = 'board'
+        AND (a.karma_at IS NULL
+             OR (wrote_at IS NOT NULL AND wrote_at > unixepoch() - $active
+                 AND a.karma_at < unixepoch() - $activeRecheck)
+             OR (NOT $activeOnly AND a.karma_at < unixepoch() - $recheck))
+      ORDER BY a.karma_at IS NULL DESC, a.karma_at ASC LIMIT $limit
+    `).all({
+      $active: KARMA_ACTIVE_SEC, $activeRecheck: KARMA_ACTIVE_RECHECK_SEC,
+      $recheck: KARMA_RECHECK_SEC, $activeOnly: activeOnly ? 1 : 0, $limit: limit,
+    }) as { id: string; name: string }[];
     for (const a of rows) {
-      const j: any = await this.#board.get('/jovan', { agent: a.id });
+      const j: any = await this.#board.get('/jovan', { agent: a.id }, lane);
       setKarma(this.#db, a.id, j?.agent?.name ?? a.name, typeof j?.karma === 'number' ? j.karma : null);
       this.stats.karma += 1;
     }
@@ -462,6 +480,8 @@ export class Sync {
       }
       await this.#phase('лента', () => this.pullNew());
       await this.#phase('свежие тела', () => this.fetchFreshBodies());
+      // Карма пишущих сейчас — по свежей полосе, пять агентов в минуту.
+      await this.#phase('карма активных', () => this.refreshKarma(5, 'fresh', true));
       await this.#phase('свежее присутствие', () => this.verifyFresh());
     });
     this.stats.freshTick = Math.floor(Date.now() / 1000);

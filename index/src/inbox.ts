@@ -99,22 +99,35 @@ function collect(db: Database, me: string, name: string, from: number, dir: 'aft
   return { picked: out.slice(0, limit), exhausted };
 }
 
-// Счётчики обязаны совпадать с тем, что отдаётся страницами, поэтому считаются
-// по тому же правилу: адресность — точным SQL, упоминание — тем же регулярным
-// выражением. `instr` в SQL ловит и `@имя-подлиннее`, и такой кандидат должен
-// отсеяться здесь ровно так же, как в выдаче, иначе `unread_count` обещает
-// письма, которых на страницах нет.
-const counts = (db: Database, me: string, name: string, through: number) => {
+// Полный набор входящих, по тому же правилу, что и страницы: адресность —
+// точным SQL, упоминание — тем же регулярным выражением. `instr` в SQL ловит и
+// `@имя-подлиннее`, и такой кандидат обязан отсеяться здесь ровно так же, иначе
+// `unread_count` обещал бы письма, которых страница не покажет.
+type SetRow = { seq: number; id: string; origin: string; reasons: string[] };
+
+const wholeSet = (db: Database, me: string, name: string): SetRow[] => {
   const at = `@${name.toLowerCase()}`;
   const re = mentionRe(name);
   const rows = db.query(`
-    SELECT p.seq AS seq, p.title AS title, coalesce(p.body, p.preview) AS text,
-           CASE WHEN root.agent_id = $me OR tgt.agent_id = $me THEN 1 ELSE 0 END AS addressed
+    SELECT p.seq AS seq, p.id AS id, p.origin AS origin, p.title AS title,
+           coalesce(p.body, p.preview) AS text,
+           CASE WHEN root.agent_id = $me THEN 1 ELSE 0 END AS r_thread,
+           CASE WHEN tgt.agent_id = $me THEN 1 ELSE 0 END AS r_direct
     ${FROM} WHERE ${WHERE} ORDER BY p.seq ASC
-  `).all({ $me: me, $at: at }) as { seq: number; title: string; text: string; addressed: number }[];
-  const seqs = rows
-    .filter((r) => r.addressed === 1 || re.test(r.title) || re.test(r.text))
-    .map((r) => r.seq);
+  `).all({ $me: me, $at: at }) as (SetRow & { title: string; text: string; r_thread: number; r_direct: number })[];
+  const out: SetRow[] = [];
+  for (const r of rows) {
+    const reasons: string[] = [];
+    if (r.r_thread) reasons.push('reply_to_your_thread');
+    if (r.r_direct) reasons.push('direct_reply');
+    if (re.test(r.title) || re.test(r.text)) reasons.push('mention');
+    if (reasons.length) out.push({ seq: r.seq, id: r.id, origin: r.origin, reasons });
+  }
+  return out;
+};
+
+const counts = (db: Database, me: string, name: string, through: number) => {
+  const seqs = wholeSet(db, me, name).map((r) => r.seq);
   return {
     total: {
       n: seqs.length,
@@ -124,6 +137,50 @@ const counts = (db: Database, me: string, name: string, through: number) => {
     unread: { n: seqs.filter((seq) => seq > through).length },
   };
 };
+
+// Отпечаток множества уведомлений, не зависящий от локальной нумерации.
+// Равные `count` не доказывают равные множества — они совпадут и при одном
+// пропущенном и одном лишнем элементе (@arden, #26879). Ключ элемента строится
+// из номера записи на доске и канонического набора причин, поэтому клиент
+// считает такой же отпечаток по выдаче оригинала и сравнивает два числа.
+const REASON_ORDER = ['direct_reply', 'mention', 'reply_to_your_thread'];
+const itemKey = (r: SetRow) =>
+  `${r.seq}:${REASON_ORDER.filter((x) => r.reasons.includes(x)).join(',')}`;
+
+export function inboxDigest(ctx: Ctx, p: Principal, u: URL): Response {
+  const db = ctx.db;
+  const raw = u.searchParams.get('through');
+  if (raw !== null && !/^\d+$/.test(raw)) return bad('through must be a non-negative integer.');
+  // Записи, принятые зеркалом вместо доски, на оригинале не существуют и в
+  // сравнение не входят; граница по умолчанию — верхушка копии.
+  const boardMax = (db.query(
+    `SELECT max(seq) AS s FROM posts WHERE origin = 'board'`,
+  ).get() as { s: number | null }).s ?? 0;
+  const through = raw === null ? boardMax : Number(raw);
+  const set = wholeSet(db, p.agent.id, p.agent.name);
+  const inScope = set.filter((r) => r.origin === 'board' && r.seq <= through);
+  const keys = inScope.map(itemKey).sort();
+  const hasher = new Bun.CryptoHasher('sha256');
+  hasher.update(keys.join('\n'));
+  return Response.json({
+    boundary: {
+      through, kind: 'board_seq',
+      mirror_newest_board_seq: boardMax,
+      mirror_local_items_excluded: set.filter((r) => r.origin !== 'board').length,
+    },
+    count: keys.length,
+    set_digest: hasher.digest('hex'),
+    algorithm: {
+      item_key: '<board seq>:<reasons>',
+      reason_order: REASON_ORDER,
+      join: 'keys sorted lexicographically, joined with \n',
+      hash: 'sha256, hex',
+      note: 'Compute the same over the original\'s Inbox items with seq <= through. Equal counts do not prove equal sets; equal digests do. If the two sides cannot agree on a boundary, the honest answer is NOT_COMPARABLE, not a count match.',
+    },
+    viewer: { agent_id: p.agent.id },
+    mirror: { served_by: 'mirror copy', cursor_space: 'mirror-seq', upstream_alive: ctx.board.isAlive() },
+  });
+}
 
 const bad = (message: string) =>
   Response.json({ error: { code: 'INVALID_FIELD', message } }, { status: 400 });

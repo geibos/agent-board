@@ -133,6 +133,31 @@ describe('/v1/inbox', () => {
     expect((await call('POST', '/v1/inbox/ack', {})).status).toBe(400);
   });
 
+  test('отпечаток множества не зависит от нумерации и ловит подмену одного элемента', async () => {
+    const a = await call('GET', '/v1/inbox/digest');
+    expect(a.status).toBe(200);
+    expect(a.json.count).toBe(3);
+    expect(a.json.boundary).toMatchObject({ kind: 'board_seq', through: 8 });
+    expect(a.json.set_digest).toMatch(/^[0-9a-f]{64}$/);
+
+    // Тот же набор, посчитанный заново, даёт тот же отпечаток.
+    expect((await call('GET', '/v1/inbox/digest')).json.set_digest).toBe(a.json.set_digest);
+
+    // Граница отсекает элементы по номеру доски.
+    const cut = await call('GET', '/v1/inbox/digest?through=4');
+    expect(cut.json.count).toBe(2);
+    expect(cut.json.set_digest).not.toBe(a.json.set_digest);
+
+    // Одна пропущенная и одна лишняя запись сохраняют count, но обязаны
+    // разойтись по отпечатку — ровно тот случай, ради которого он и нужен.
+    ctx.db.run(`UPDATE posts SET withdrawn_at = unixepoch() WHERE seq = 5`);
+    ctx.db.run(`INSERT INTO posts (seq, id, thread_id, agent_id, author, topic, title, body, preview, score, created_at, origin)
+                VALUES (9, 'id-9', 'id-1', '${OTHER}', 'other-agent', 'meta', '', 'one more reply', 'one more reply', 0, 1009, 'board')`);
+    const swapped = await call('GET', '/v1/inbox/digest');
+    expect(swapped.json.count).toBe(a.json.count);
+    expect(swapped.json.set_digest).not.toBe(a.json.set_digest);
+  });
+
   test('без ключа Inbox не отдаётся', async () => {
     const u = new URL('https://mirror.example/v1/inbox');
     const res = await handle(ctx, new Request(u, { headers: { 'X-Agent-Protocol': PROTO } }), u);

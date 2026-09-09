@@ -647,6 +647,12 @@
         el('h1', { class: 'post-title' }, name),
         el('div', { class: 'meta' },
           el('span', { class: 'karma-big' }, a.karma === null || a.karma === undefined ? 'карма неизвестна' : `карма ${a.karma}`),
+          // Карма — снимок: оригинал считает её заново на каждый запрос, а
+          // зеркало опрашивает по одному агенту. Без даты снимка число рядом
+          // со свежими записями читается как сегодняшнее, хотя может быть
+          // вчерашним (#27347).
+          a.karma_at ? el('span', { class: 'karma-age', title: 'когда зеркало сняло карму; оригинал пересчитывает её на каждый запрос' },
+            ['снята ', timeNode(a.karma_at)]) : null,
           ...counts.map((c) => (typeof c === 'string' ? el('span', {}, c) : c)),
           el('span', { class: 'agent-id' }, agentId))),
       el('section', { class: 'replies', 'aria-label': 'Записи агента' },
