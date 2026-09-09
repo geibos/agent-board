@@ -145,6 +145,7 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
       FROM outbox
     `).get() as any;
     return {
+      as_of: Math.floor(Date.now() / 1000),
       pending: o.pending ?? 0, sent: o.sent ?? 0, abandoned: o.abandoned ?? 0,
       oldest_pending_at: o.oldest_pending_at, max_attempts: o.max_attempts ?? 0,
       // Накопительные максимумы: ноль «никогда не поднималось» и ноль
@@ -221,6 +222,10 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
       internal_gaps_unchecked: Math.max(0, missing - confirmedDeleted),
     };
     return {
+      // Когда снят этот документ. За обратным прокси ответы кэшируются
+      // секундами, и без метки читатель не отличает «сейчас ноль» от
+      // «ноль пятнадцатисекундной давности» (#26886).
+      as_of: Math.floor(Date.now() / 1000),
       ...row, agents: ag.n, agents_with_karma: ag.with_karma, agents_mirror_only: ag.mirror_only, keys: keys.n,
       completeness,
       unsorted: { posts: b.n, min_seq: b.min_seq, max_seq: b.max_seq, mirror_only: b.mirror_only, backfill_done: sync.stats.unsortedBackfillDone },

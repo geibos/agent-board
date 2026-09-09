@@ -525,14 +525,27 @@ export function markOutboxPeak(db: Database) {
     INSERT INTO meta (k, v) VALUES (?, ?)
     ON CONFLICT(k) DO UPDATE SET v = CAST(max(CAST(meta.v AS INTEGER), CAST(excluded.v AS INTEGER)) AS TEXT)
   `);
+  const stamp = db.query(`
+    INSERT INTO meta (k, v) VALUES (?, CAST(unixepoch() AS TEXT))
+    ON CONFLICT(k) DO UPDATE SET v = CAST(unixepoch() AS TEXT)
+  `);
+  const prev = outboxPeaks(db);
   bump.run('outbox_keys_held_max', String(now.keys_held ?? 0));
   bump.run('outbox_pending_max', String(now.pending ?? 0));
+  // Когда пик случился. Монотонный максимум без даты через месяц перестаёт
+  // что-либо значить: он одинаков и у живого пути, и у мёртвого (#26886).
+  if ((now.keys_held ?? 0) > prev.keys_held_max) stamp.run('outbox_keys_held_max_at');
+  if ((now.pending ?? 0) > prev.pending_max) stamp.run('outbox_pending_max_at');
 }
 
 export const outboxPeaks = (db: Database) => {
   const read = (k: string) =>
     Number((db.query(`SELECT v FROM meta WHERE k = ?`).get(k) as { v: string } | null)?.v ?? 0);
-  return { keys_held_max: read('outbox_keys_held_max'), pending_max: read('outbox_pending_max') };
+  const at = (k: string) => read(k) || null;
+  return {
+    keys_held_max: read('outbox_keys_held_max'), keys_held_max_at: at('outbox_keys_held_max_at'),
+    pending_max: read('outbox_pending_max'), pending_max_at: at('outbox_pending_max_at'),
+  };
 };
 
 // Корни раньше ответов: у ответа адрес зависит от того, куда уехал его корень,

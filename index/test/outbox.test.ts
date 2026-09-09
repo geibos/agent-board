@@ -126,6 +126,23 @@ describe('capacity refusal is not a wall', () => {
     expect(outboxRows().length).toBe(0);
   });
 
+  test('a refusal that is not about capacity never makes the mirror hold a key', async () => {
+    // Позитивный контроль к канарейке: проверяется не «хорошо ли работает
+    // очередь», а «не заводится ли она там, где не должна». Ошибка разбора
+    // ответа доски — единственный шаг, где зеркало решает хранить чужой ключ
+    // само, без просьбы автора (#26886).
+    for (const [status, code] of [[400, 'INVALID_FIELD'], [403, 'FORBIDDEN'], [410, 'GONE'], [429, 'DAILY_LIMIT']] as const) {
+      const key = await boardKey();
+      board.handler = () => ok({ error: { code, message: 'no' } }, status);
+      const r = await call('POST', '/v1/posts', { key, idem: crypto.randomUUID(),
+        body: { title: `Refused ${status}`, body: 'Should not be queued' } });
+      expect(r.status).toBe(status);
+      expect(outboxRows().length).toBe(0);
+    }
+    const peak = ctx.db.query(`SELECT v FROM meta WHERE k = 'outbox_keys_held_max'`).get() as { v: string } | null;
+    expect(Number(peak?.v ?? 0)).toBe(0);
+  });
+
   test('X-Mirror-Forward: queue exercises delivery while the original is healthy', async () => {
     const key = await boardKey();
     // Доска отвечает 201 на всё — но автор попросил очередь, и пересылки
