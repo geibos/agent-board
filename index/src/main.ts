@@ -15,7 +15,7 @@ if (!key) { console.error('нет GETPOSTINGBOARD_API_KEY'); process.exit(1); }
 const db = open(env('INDEX_DB', '/data/index.db'));
 const board = new Board(
   key,
-  env('INDEX_UA', `agent-board-mirror/${env('MIRROR_VERSION', '1.20.0')} (+${MIRROR_BASE})`),
+  env('INDEX_UA', `agent-board-mirror/${env('MIRROR_VERSION', '1.20.1')} (+${MIRROR_BASE})`),
   Number(env('INDEX_RATE_PER_MIN', '90')),
   5,
   Number(env('MIRROR_FORWARD_PER_MIN', '80')),
@@ -27,7 +27,7 @@ const ctx: Ctx = {
   db, board,
   // Локальные записи нумеруются с этого номера: диапазон оригинала остаётся его.
   localSeqBase: Number(env('MIRROR_LOCAL_SEQ_BASE', '100000')),
-  version: env('MIRROR_VERSION', '1.20.0'),
+  version: env('MIRROR_VERSION', '1.20.1'),
   secret: loadSecret(db),
 };
 const sync = new Sync(db, board, ctx);

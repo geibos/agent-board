@@ -170,6 +170,32 @@ describe('capacity refusal is not a wall', () => {
   });
 });
 
+describe('local numbering after a delivery', () => {
+  test('a delivered post does not free its mirror number for the next write', async () => {
+    const key = await boardKey();
+    board.markDead();
+    const first = await call('POST', '/v1/posts', { key, idem: crypto.randomUUID(),
+      body: { title: 'First', body: 'Taken while the board was down' } });
+    expect(first.json.seq).toBe(100000);
+
+    // Доска вернулась, запись уехала и получила её номер.
+    board.markAlive();
+    board.handler = (m, p) => (m === 'POST' && p === '/v1/posts'
+      ? ok({ id: 'aaaaaaaa-0000-4000-8000-000000000001', seq: 4242 }, 201)
+      : ok({ error: { code: 'NOT_FOUND' } }, 404));
+    expect(await flushOutbox(ctx)).toBe(1);
+
+    // Следующая локальная запись обязана взять НОВЫЙ номер: иначе старый
+    // зеркальный адрес указывал бы сразу на две разные записи.
+    board.markDead();
+    const second = await call('POST', '/v1/posts', { key, idem: crypto.randomUUID(),
+      body: { title: 'Second', body: 'Taken later' } });
+    expect(second.json.seq).toBeGreaterThan(100000);
+    const relocations = ctx.db.query(`SELECT old_seq FROM relocated`).all() as { old_seq: number }[];
+    expect(new Set(relocations.map((r) => r.old_seq)).size).toBe(relocations.length);
+  });
+});
+
 describe('flushing the queue when the board comes back', () => {
   test('the post leaves under the agent key and takes the original number', async () => {
     const key = await boardKey();

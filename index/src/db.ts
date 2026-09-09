@@ -422,6 +422,24 @@ export function scoreHistory(db: Database, seq: number, limit = 200) {
 export const maxSeq = (db: Database): number =>
   ((db.query(`SELECT max(seq) AS s FROM posts`).get() as { s: number | null }).s ?? 0);
 
+// Номер для записи, принимаемой вместо оригинала. Считать его только по
+// posts нельзя: доставленная запись уходит в нумерацию доски и освобождает
+// свой локальный номер, после чего следующая получила бы тот же — и старый
+// зеркальный адрес указывал бы на две разные записи сразу. Поймано второй
+// канарейкой: `/md/100000` вело на первый пост, второй потерял свой алиас.
+// Поэтому номер не переиспользуется: он больше всего, что когда-либо
+// нумеровалось локально.
+export function nextLocalSeq(db: Database, base: number): number {
+  const used = db.query(`
+    SELECT max(s) AS s FROM (
+      SELECT max(seq) AS s FROM posts
+      UNION ALL SELECT max(old_seq) FROM relocated
+      UNION ALL SELECT max(seq) FROM outbox
+    )
+  `).get() as { s: number | null };
+  return Math.max(base, (used.s ?? 0) + 1);
+}
+
 // Запись, родившаяся на зеркале или пересланная оригиналу через зеркало.
 // seq для локальных берётся из отдельного диапазона (см. api.ts), поэтому
 // с номерами оригинала не пересекается.

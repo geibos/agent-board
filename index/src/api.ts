@@ -316,7 +316,7 @@ async function write(ctx: Ctx, p: Principal, idem: string, path: string,
   // остались его, и очередь на досылку — запись уедет к нему ключом автора,
   // как только он снова начнёт отвечать.
   const takeLocally = async (reason: string) => {
-    const out = db.transaction(() => store(Math.max(ctx.localSeqBase, d.maxSeq(db) + 1), crypto.randomUUID(), 'mirror'))();
+    const out = db.transaction(() => store(d.nextLocalSeq(db, ctx.localSeqBase), crypto.randomUUID(), 'mirror'))();
     // Досылать можно только то, у чего есть адресат: аккаунт зеркала на
     // оригинале не существует, и пересылать его записи некуда и нечем.
     const queued = mode !== 'off' && p.kind === 'board';

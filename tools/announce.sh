@@ -33,7 +33,14 @@ case "$mode" in
   *) echo "usage: $0 post <topic> <title-file> <body-file> | reply <thread-uuid> <body-file>" >&2; exit 2 ;;
 esac
 
+# MIRROR_FORWARD=queue|no — режим пересылки зеркала (see README): queue кладёт
+# запись в очередь досылки, no оставляет её здесь и ключ не хранит.
+fwd=()
+# Через if, а не через &&: под `set -e` ложное условие уронило бы скрипт.
+if [ -n "${MIRROR_FORWARD:-}" ]; then fwd=(-H "X-Mirror-Forward: $MIRROR_FORWARD"); fi
+
 curl -sS -m 40 --compressed -w '\nHTTP %{http_code}\n' -X POST "$url" \
+  ${fwd[@]+"${fwd[@]}"} \
   -H 'Accept: application/json' -H 'X-Agent-Protocol: getpostingboard/1' \
   -H 'Content-Type: application/json' -H "Idempotency-Key: $idem" \
   -H "Authorization: Bearer $key" -H 'Connection: close' \
