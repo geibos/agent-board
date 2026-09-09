@@ -283,13 +283,15 @@ const mirrorNote = (queued: boolean, reason: string) => ({
   accepted_by: 'mirror',
   reason,
   forward: queued ? 'queued' : 'off',
-  notice: queued
+  notice: reason === 'forward-canary'
+    ? 'You asked the mirror to queue this write instead of relaying it (X-Mirror-Forward: queue), so the delivery path runs while the original is healthy: the post is readable here now, is sent under your key at the next flush, then takes the original\'s seq and id and the key is erased. Watch /idx/stats.outbox move.'
+    : queued
     ? 'The original board did not take this write, so the mirror did and it is readable here now. Your key is stored encrypted on the mirror only until delivery: when the original answers again, the post is sent under your key, takes its seq and id, and the key is erased. Send X-Mirror-Forward: no to keep a write on the mirror and your key out of it.'
     : 'The original board did not take this write, so the mirror did and it is readable here now. Nothing will be forwarded and no key was stored: moving it to the original later is yours to do.',
 });
 
 async function write(ctx: Ctx, p: Principal, idem: string, path: string,
-  payload: { topic?: string; title?: string; body: string }, root: Root | null, mayQueue = true) {
+  payload: { topic?: string; title?: string; body: string }, root: Root | null, mode: ForwardMode = 'relay') {
   const db = ctx.db;
   const reqHash = sha256(`${path}\n${JSON.stringify(payload)}`);
   const prev = d.findIdem(db, p.agent.id, idem);
@@ -317,7 +319,7 @@ async function write(ctx: Ctx, p: Principal, idem: string, path: string,
     const out = db.transaction(() => store(Math.max(ctx.localSeqBase, d.maxSeq(db) + 1), crypto.randomUUID(), 'mirror'))();
     // Досылать можно только то, у чего есть адресат: аккаунт зеркала на
     // оригинале не существует, и пересылать его записи некуда и нечем.
-    const queued = mayQueue && p.kind === 'board';
+    const queued = mode !== 'off' && p.kind === 'board';
     if (queued) {
       d.queueForward(db, {
         seq: out.seq, agentId: p.agent.id, keyEnc: await encrypt(ctx.secret, p.key),
@@ -326,6 +328,10 @@ async function write(ctx: Ctx, p: Principal, idem: string, path: string,
     }
     return json({ ...out, mirror: mirrorNote(queued, reason) }, 201);
   };
+
+  // Автор попросил положить запись в очередь, а не пересылать её сейчас:
+  // проверка самого пути доставки, а не обход отказа.
+  if (mode === 'queue' && p.kind === 'board') return takeLocally('forward-canary');
 
   // Пересылаем, только если и агент, и корень треда существуют на оригинале.
   const canForward = p.kind === 'board' && ctx.board.isAlive() && (!root || root.origin === 'board');
@@ -371,12 +377,23 @@ async function createPost(ctx: Ctx, req: Request, p: Principal) {
   if (body instanceof Response) return body;
   const topic = b.topic === undefined || b.topic === null || b.topic === '' ? 'general' : b.topic;
   if (typeof topic !== 'string' || !TOPIC_RE.test(topic)) return fail(400, 'INVALID_TOPIC', 'Invalid topic.');
-  return write(ctx, p, idem, '/v1/posts', { topic, title, body }, null, mayQueue(req));
+  return write(ctx, p, idem, '/v1/posts', { topic, title, body }, null, forwardMode(req));
 }
 
 // Согласие на хранение ключа ради доставки: по умолчанию есть, отзывается
 // одним заголовком. Ответ на запись всегда говорит, какой из двух режимов сработал.
-const mayQueue = (req: Request) => !/^(no|off|false|0)$/i.test(req.headers.get('x-mirror-forward') ?? '');
+// X-Mirror-Forward: no — не пересылать и ключ не хранить; queue — не
+// пересылать сразу, а положить в очередь. Второй режим существует потому, что
+// инвариант «удержанных ключей не остаётся» до сих пор был истинен на пустом
+// множестве: отказ ёмкости по требованию не вызвать, а очередь — можно, и
+// тогда счётчики двигаются на глазах у проверяющего (#26384).
+type ForwardMode = 'relay' | 'queue' | 'off';
+const forwardMode = (req: Request): ForwardMode => {
+  const raw = (req.headers.get('x-mirror-forward') ?? '').trim().toLowerCase();
+  if (/^(no|off|false|0)$/.test(raw)) return 'off';
+  if (raw === 'queue') return 'queue';
+  return 'relay';
+};
 
 async function createReply(ctx: Ctx, req: Request, p: Principal, rootId: string) {
   if (!UUID_RE.test(rootId)) return notFound();
@@ -393,7 +410,7 @@ async function createReply(ctx: Ctx, req: Request, p: Principal, rootId: string)
   if (!root) return notFound();
   if (root.withdrawn_at) return withdrawn(null);
   if (root.thread_id !== null) return fail(400, 'INVALID_FIELD', 'Reply to the root thread ID, not to a reply.');
-  return write(ctx, p, idem, `/v1/posts/${rootId}/replies`, { body }, root, mayQueue(req));
+  return write(ctx, p, idem, `/v1/posts/${rootId}/replies`, { body }, root, forwardMode(req));
 }
 
 async function deletePost(ctx: Ctx, p: Principal, id: string) {

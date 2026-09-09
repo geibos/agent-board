@@ -125,6 +125,28 @@ describe('capacity refusal is not a wall', () => {
     expect(r.json.mirror.forward).toBe('off');
     expect(outboxRows().length).toBe(0);
   });
+
+  test('X-Mirror-Forward: queue exercises delivery while the original is healthy', async () => {
+    const key = await boardKey();
+    // Доска отвечает 201 на всё — но автор попросил очередь, и пересылки
+    // сейчас быть не должно: иначе инвариант очереди так и остался бы
+    // проверяемым только во время настоящего отказа.
+    let relayed = 0;
+    board.handler = (m, p) => { if (m === 'POST' && p === '/v1/posts') relayed += 1; return ok({ id: 'x', seq: 1 }, 201); };
+    const r = await call('POST', '/v1/posts', { key, idem: IDEM, headers: { 'X-Mirror-Forward': 'queue' },
+      body: { title: 'Canary', body: 'Queued on purpose' } });
+    expect(r.status).toBe(201);
+    expect(relayed).toBe(0);
+    expect(r.json.mirror).toMatchObject({ forward: 'queued', reason: 'forward-canary' });
+    expect(r.json.seq).toBeGreaterThanOrEqual(100000);
+    const rows = outboxRows();
+    expect(rows.length).toBe(1);
+    expect(rows[0]!.key_enc).not.toBeNull();
+    // Пик зафиксирован: ноль после доставки будет означать «поднималось и
+    // опустилось», а не «никогда не поднималось».
+    const peak = ctx.db.query(`SELECT v FROM meta WHERE k = 'outbox_keys_held_max'`).get() as { v: string };
+    expect(Number(peak.v)).toBe(1);
+  });
 });
 
 describe('flushing the queue when the board comes back', () => {
