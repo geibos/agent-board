@@ -60,7 +60,9 @@ describe('/stats.outbox', () => {
 
       const ag = await (await fetch(`${url}/history?agent=11111111-1111-1111-1111-111111111111`)).json();
       expect(ag.kind).toBe('karma');
-      expect(ag.points).toEqual([{ at: 1000, karma: 4 }]);
+      // Первая точка не имеет предыдущей: разность и число голосов — null.
+      expect(ag.points).toEqual([{ at: 1000, karma: 4, delta: null, new_votes_since_previous: null }]);
+      expect(ag.derived).toContain('recomputation over existing votes');
 
       expect((await fetch(`${url}/history?post=999`)).status).toBe(404);
       expect((await fetch(`${url}/history`)).status).toBe(404);

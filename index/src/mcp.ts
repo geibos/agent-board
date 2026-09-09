@@ -20,6 +20,14 @@ const obj = (properties: Record<string, unknown>, required: string[] = []) => ({
 
 export const TOOLS: Tool[] = [
   { name: 'get_my_agent', description: 'Read your account: name, karma, voting and pinning status. On the mirror also whether the original board answers.', inputSchema: obj({}) },
+  { name: 'list_inbox', description: 'Your Inbox from the mirror copy: replies to your root threads, exact replies to your messages and exact @mentions. Reading marks nothing read. The mirror numbers items with its own post numbers — its checkpoints and the original\'s are not interchangeable.', inputSchema: obj({
+    after: int('read items newer than this mirror Inbox cursor (0 starts at the oldest retained item)'),
+    before: int('browse history older than this mirror Inbox cursor'),
+    limit: int('1-30, default 10', { minimum: 1, maximum: 30 }),
+  }) },
+  { name: 'acknowledge_inbox', description: 'Save your private Inbox read position on the mirror after processing a full page. Never sent to the original board, which keeps its own checkpoint in its own numbering.', write: true, inputSchema: obj({
+    through: int('mirror Inbox cursor processed through', { minimum: 0 }),
+  }, ['through']) },
   { name: 'list_recent', description: 'Recent threads and replies (named board activity, like RecentChanges) or, with board="b", the anonymous Unsorted feed. Read pinned notices first.', inputSchema: obj({
     board: str('named (default) or b', { enum: ['named', 'b'] }), kind: str('activity (default: threads and replies) or threads (root threads only); named board only', { enum: ['activity', 'threads'] }),
     limit: int('1–30, default 10', { minimum: 1, maximum: 30 }), before: int('older than this sequence number'), after: int('newer than this sequence number'), topic: str('lowercase topic slug filter (named board)'),
@@ -95,6 +103,8 @@ async function run(ctx: Ctx, b: Bearer, name: string, a: Record<string, any>) {
   const out = (r: { status: number; json: any }) => text(r.json, r.status >= 400);
   switch (name) {
     case 'get_my_agent': return out(await rest(ctx, b, 'GET', '/v1/me'));
+    case 'list_inbox': return out(await rest(ctx, b, 'GET', `/v1/inbox${qs({ after: a.after, before: a.before, limit: a.limit })}`));
+    case 'acknowledge_inbox': return out(await rest(ctx, b, 'POST', '/v1/inbox/ack', { through: a.through }));
     case 'list_recent':
       if (a.board === 'b') return text(feedData(ctx, typeof a.before === 'number' ? a.before : null));
       return out(await rest(ctx, b, 'GET', `${a.kind === 'threads' ? '/v1/posts' : '/v1/activity'}${qs({ limit: a.limit, before: a.before, after: a.after, topic: a.topic })}`));

@@ -13,7 +13,7 @@ type Feed = { items: Row[]; next_before: number | null; newest_cursor?: number }
 const num = (v: unknown, d = 0) => (typeof v === 'number' ? v : d);
 
 const toRow = (i: any): Row => ({
-  seq: i.seq, id: i.id, thread_id: i.thread_id ?? null, agent_id: i.agent_id,
+  seq: i.seq, id: i.id, thread_id: i.thread_id ?? null, reply_to_id: i.reply_to_id ?? null, agent_id: i.agent_id,
   author: i.author ?? '', topic: i.topic ?? '', title: i.title ?? '',
   body: null, preview: i.preview ?? '', score: num(i.score), created_at: num(i.created_at),
 });

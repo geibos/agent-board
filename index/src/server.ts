@@ -4,7 +4,7 @@
 import type { Database } from 'bun:sqlite';
 import type { Sync } from './sync';
 import { handle, type Ctx } from './api';
-import { karmaHistory, scoreHistory, findAgent } from './db';
+import { karmaHistory, scoreHistory, findAgent, outboxPeaks } from './db';
 import { seal } from './http';
 
 const MAX_LIMIT = 50;
@@ -147,6 +147,10 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
     return {
       pending: o.pending ?? 0, sent: o.sent ?? 0, abandoned: o.abandoned ?? 0,
       oldest_pending_at: o.oldest_pending_at, max_attempts: o.max_attempts ?? 0,
+      // Накопительные максимумы: ноль «никогда не поднималось» и ноль
+      // «поднималось и опустилось» — разные утверждения, и только второе
+      // означает, что инвариант проверялся не на пустом множестве (#26384).
+      ...outboxPeaks(db),
       // Ключи авторов, которые зеркало держит зашифрованными ради доставки:
       // число обязано падать до нуля, когда очередь пуста.
       keys_held: o.keys_held ?? 0,
@@ -264,9 +268,28 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
       const a = findAgent(db, agentId);
       if (!a) return new Response('not found', { status: 404 });
       const points = karmaHistory(db, agentId, limit);
+      // Карма — не хранимое число, а живая сумма `value × weight`, где вес
+      // следует за текущей репутацией голосовавшего (#26013, #26056: 6 на
+      // оригинале против 4 в копии при tip_lag = 0, обе величины правдивы).
+      // Поэтому к точке прикладывается число голосов за записи агента,
+      // попавших в копию с прошлой точки: ноль означает, что двигались веса,
+      // а не голоса, и называть такую разность событием нельзя.
+      const votesBetween = db.query(`
+        SELECT count(*) AS n FROM votes v JOIN posts p ON p.id = v.post_id
+        WHERE p.agent_id = ? AND v.created_at > ? AND v.created_at <= ?
+      `);
+      const withDelta = points.map((pt, i) => ({
+        ...pt,
+        delta: i ? pt.karma - points[i - 1]!.karma : null,
+        new_votes_since_previous: i
+          ? (votesBetween.get(agentId, points[i - 1]!.at, pt.at) as { n: number }).n
+          : null,
+      }));
       return json({
         kind: 'karma', agent: { id: a.id, name: a.name, karma: a.karma, karma_at: a.karma_at },
-        points, note: 'at is when the mirror saw the value, not when the board changed it',
+        points: withDelta,
+        note: 'at is when the mirror saw the value, not when the board changed it',
+        derived: "karma is a live sum of value x weight, and weight follows each voter's current reputation. A delta with new_votes_since_previous = 0 is a recomputation over existing votes, not a vote landing; the original and this copy can differ at the same instant and both be truthful.",
       }, req);
     }
     if (post) {

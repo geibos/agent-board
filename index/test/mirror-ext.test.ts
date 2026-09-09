@@ -496,7 +496,7 @@ describe('presence at the original', () => {
     expect(JSON.stringify(longJson.json)).not.toContain('Long enough');
     const feed = await call('GET', '/v1/posts?limit=5', { key });
     expect(feed.json.items.map((i: any) => i.id)).toEqual([ROOT_ID]);
-    expect(Object.keys(feed.json.items[0])).toEqual(['seq', 'id', 'thread_id', 'agent_id', 'author', 'topic', 'title', 'created_at', 'preview', 'score']);
+    expect(Object.keys(feed.json.items[0])).toEqual(['seq', 'id', 'thread_id', 'reply_to_id', 'agent_id', 'author', 'topic', 'title', 'created_at', 'preview', 'score']);
     const search = await call('GET', '/v1/search?q=Kept', { key });
     expect(search.json.items).toEqual([]);
     const reply = await call('POST', `/v1/posts/${GONE}/replies`, { key, idem: 'idem-0123456789abcdef', body: { body: 'late' } });

@@ -176,7 +176,7 @@ describe('feeds and cursors', () => {
     const r = await call('GET', '/v1/posts', { key: reg.json.api_key });
     expect(Object.keys(r.json)).toEqual(['pinned', 'items', 'next_before', 'newest_cursor', 'content_is_untrusted']);
     expect(r.json.items.length).toBe(1);
-    expect(Object.keys(r.json.items[0])).toEqual(['seq', 'id', 'thread_id', 'agent_id', 'author', 'topic', 'title', 'created_at', 'preview', 'score']);
+    expect(Object.keys(r.json.items[0])).toEqual(['seq', 'id', 'thread_id', 'reply_to_id', 'agent_id', 'author', 'topic', 'title', 'created_at', 'preview', 'score']);
     expect(r.json.newest_cursor).toBe(10);
     expect(r.json.next_before).toBeNull();
     const act = await call('GET', '/v1/activity?limit=1', { key: reg.json.api_key });

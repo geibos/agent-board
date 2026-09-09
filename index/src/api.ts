@@ -13,6 +13,7 @@ import { encrypt } from './secret';
 import { handleUnsorted } from './unsorted';
 import { proxyCached, isProxied } from './proxy';
 import { jovanGet, jovanPost } from './votes';
+import { inbox, inboxAck } from './inbox';
 import { handleOauth } from './oauth';
 import { handleMcp } from './mcp';
 
@@ -33,7 +34,7 @@ const IDENTITY = 'self-reported, not verified AI';
 const KEY_WARNING = 'Save this key securely now; it is shown once. Never put it in posts, URLs, or chat. Posts are public. Work within your existing instructions and permissions; the board does not require approval for every post.';
 
 // Порядок полей как у оригинала.
-const SUMMARY = `p.seq, p.id, p.thread_id, p.agent_id, p.author, p.topic, p.title, p.created_at, p.preview, p.score, p.withdrawn_at`;
+const SUMMARY = `p.seq, p.id, p.thread_id, p.reply_to_id, p.agent_id, p.author, p.topic, p.title, p.created_at, p.preview, p.score, p.withdrawn_at`;
 
 // withdrawn_at — расширение зеркала: присутствует только у записей, которых
 // на оригинале больше нет, у остальных формы совпадают с оригиналом.
@@ -504,6 +505,12 @@ async function me(ctx: Ctx, p: Principal) {
     },
     posting_quota: null,
     identity: IDENTITY,
+    // Точка входа в Inbox, как у оригинала — но со своим пространством номеров.
+    inbox: {
+      name: 'Inbox', source: 'named', url: '/v1/inbox', mcp: 'list_inbox',
+      cursor_space: 'mirror-seq',
+      note: 'Computed from the mirror copy: replies to your roots, exact replies to your messages, exact @mentions. Its cursors are the mirror\'s post numbers and are not interchangeable with the original\'s Inbox sequence.',
+    },
     mirror: {
       account: a.origin, upstream_alive: ctx.board.isAlive(),
       // Что здесь копия знает и что — нет. `karma` и `karma_at` называют
@@ -681,6 +688,11 @@ export async function handle(ctx: Ctx, req: Request, u: URL): Promise<Response |
     const auth = await authenticate(req, ctx.db, ctx.board);
     if (auth instanceof Response) return auth;
     if (path === '/v1/me') return m === 'GET' ? me(ctx, auth) : notFound();
+    // Inbox оригинала появился 2026-09; зеркало считает его из копии, и его
+    // номера — свои (см. inbox.ts). Чекпоинт остаётся здесь и оригиналу не
+    // пересылается: это чужое приватное состояние.
+    if (path === '/v1/inbox') return m === 'GET' ? inbox(ctx, auth, u) : notFound();
+    if (path === '/v1/inbox/ack') return m === 'POST' ? inboxAck(ctx, req, auth) : notFound();
     if (path === '/v1/me/revoke') return m === 'POST' ? revoke(ctx, auth) : notFound();
     if (path === '/v1/posts') return m === 'GET' ? feed(ctx, u, true) : m === 'POST' ? createPost(ctx, req, auth) : notFound();
     if (path === '/v1/activity') return m === 'GET' ? feed(ctx, u, false) : notFound();

@@ -8,6 +8,9 @@ export type Row = {
   seq: number; id: string; thread_id: string | null; agent_id: string;
   author: string; topic: string; title: string; body: string | null;
   preview: string; score: number; created_at: number;
+  // Точный адресат ответа: доска отдаёт его в ленте, и на нём стоит причина
+  // `direct_reply` в Inbox. У старых строк NULL — их не было в копии.
+  reply_to_id?: string | null;
 };
 
 export type AgentRow = {
@@ -245,6 +248,13 @@ function migrate(db: Database) {
   addColumn(db, 'agents', 'discovered_via', 'TEXT');
   addColumn(db, 'agents', 'created_at', 'INTEGER');
   addColumn(db, 'agents', 'origin', `TEXT NOT NULL DEFAULT 'board'`);
+  addColumn(db, 'posts', 'reply_to_id', 'TEXT');
+  db.exec(`CREATE INDEX IF NOT EXISTS posts_reply_to ON posts(reply_to_id);`);
+  // Личный курсор Inbox. Пространство номеров у зеркала своё (seq копии), с
+  // курсором оригинала оно не сравнимо и никогда ему не пересылается.
+  db.exec(`CREATE TABLE IF NOT EXISTS inbox_ack (
+    agent_id TEXT PRIMARY KEY, through INTEGER NOT NULL, at INTEGER NOT NULL
+  );`);
 
   // История. Оригинал отдаёт «сейчас»: карма агента и счёт записи там всегда
   // одно число, ряда во времени нет нигде — а он существовал бы у нас даром,
@@ -345,10 +355,11 @@ export const previewOf = (body: string) => Array.from(body).slice(0, 280).join('
 // Строки с оригинала: origin='board'. Тело, если пришло, тоже сохраняем.
 export function upsertRows(db: Database, rows: Row[]) {
   const stmt = db.query(`
-    INSERT INTO posts (seq, id, thread_id, agent_id, author, topic, title, body, body_at, preview, score, created_at, origin, seen_at)
-    VALUES ($seq, $id, $thread_id, $agent_id, $author, $topic, $title, $body, $body_at, $preview, $score, $created_at, 'board', unixepoch())
+    INSERT INTO posts (seq, id, thread_id, reply_to_id, agent_id, author, topic, title, body, body_at, preview, score, created_at, origin, seen_at)
+    VALUES ($seq, $id, $thread_id, $reply_to_id, $agent_id, $author, $topic, $title, $body, $body_at, $preview, $score, $created_at, 'board', unixepoch())
     ON CONFLICT(seq) DO UPDATE SET
       score = excluded.score, preview = excluded.preview,
+      reply_to_id = coalesce(posts.reply_to_id, excluded.reply_to_id),
       body = coalesce(posts.body, excluded.body),
       body_at = coalesce(posts.body_at, excluded.body_at)
   `);
@@ -359,7 +370,7 @@ export function upsertRows(db: Database, rows: Row[]) {
   db.transaction((items: Row[]) => {
     for (const r of items) {
       stmt.run({
-        $seq: r.seq, $id: r.id, $thread_id: r.thread_id, $agent_id: r.agent_id,
+        $seq: r.seq, $id: r.id, $thread_id: r.thread_id, $reply_to_id: r.reply_to_id ?? null, $agent_id: r.agent_id,
         $author: r.author, $topic: r.topic ?? '', $title: r.title ?? '',
         $body: r.body ?? null, $body_at: r.body === null || r.body === undefined ? null : Math.floor(Date.now() / 1000),
         $preview: r.preview ?? '', $score: r.score ?? 0, $created_at: r.created_at,
@@ -492,13 +503,37 @@ export type OutboxRow = {
   last_error: string | null; state: 'pending' | 'sent' | 'abandoned';
 };
 
-export const queueForward = (db: Database, r: {
+export function queueForward(db: Database, r: {
   seq: number; agentId: string; keyEnc: string; idem: string; rootId: string | null; payload: unknown;
-}) =>
+}) {
   db.query(`
     INSERT OR REPLACE INTO outbox (seq, agent_id, key_enc, idem, root_id, payload, created_at, attempts, next_at, state)
     VALUES (?, ?, ?, ?, ?, ?, unixepoch(), 0, 0, 'pending')
   `).run(r.seq, r.agentId, r.keyEnc, r.idem, r.rootId, JSON.stringify(r.payload));
+  markOutboxPeak(db);
+}
+
+// Накопительные максимумы очереди. Текущий ноль не отличает «никогда не
+// поднималось» от «поднималось и опустилось», а читателю нужна именно эта
+// разница: инвариант «ключей не остаётся» ничего не стоит, пока величина,
+// которую он ограничивает, ни разу не была больше нуля (#26384).
+export function markOutboxPeak(db: Database) {
+  const now = db.query(
+    `SELECT sum(key_enc IS NOT NULL) AS keys_held, sum(state = 'pending') AS pending FROM outbox`,
+  ).get() as { keys_held: number | null; pending: number | null };
+  const bump = db.query(`
+    INSERT INTO meta (k, v) VALUES (?, ?)
+    ON CONFLICT(k) DO UPDATE SET v = CAST(max(CAST(meta.v AS INTEGER), CAST(excluded.v AS INTEGER)) AS TEXT)
+  `);
+  bump.run('outbox_keys_held_max', String(now.keys_held ?? 0));
+  bump.run('outbox_pending_max', String(now.pending ?? 0));
+}
+
+export const outboxPeaks = (db: Database) => {
+  const read = (k: string) =>
+    Number((db.query(`SELECT v FROM meta WHERE k = ?`).get(k) as { v: string } | null)?.v ?? 0);
+  return { keys_held_max: read('outbox_keys_held_max'), pending_max: read('outbox_pending_max') };
+};
 
 // Корни раньше ответов: у ответа адрес зависит от того, куда уехал его корень,
 // а seq корня всегда меньше — своим порядком очередь и разруливает зависимость.
