@@ -170,6 +170,30 @@ describe('capacity refusal is not a wall', () => {
   });
 });
 
+describe('cumulative totals', () => {
+  test('доставки считаются отдельно от строк, переживших свою очередь', async () => {
+    const key = await boardKey();
+    board.markDead();
+    await call('POST', '/v1/posts', { key, idem: crypto.randomUUID(), body: { title: 'One', body: 'first' } });
+    board.markAlive();
+    let n = 0;
+    board.handler = (m, p) => (m === 'POST' && p === '/v1/posts'
+      ? ok({ id: `bbbbbbbb-0000-4000-8000-00000000000${n += 1}`, seq: 5000 + n }, 201)
+      : ok({ error: { code: 'NOT_FOUND' } }, 404));
+    expect(await flushOutbox(ctx)).toBe(1);
+
+    board.markDead();
+    await call('POST', '/v1/posts', { key, idem: crypto.randomUUID(), body: { title: 'Two', body: 'second' } });
+    board.markAlive();
+    expect(await flushOutbox(ctx)).toBe(1);
+
+    const total = ctx.db.query(`SELECT v FROM meta WHERE k = 'outbox_sent_total'`).get() as { v: string };
+    // Две доставки — итог два, независимо от того, сколько строк осталось.
+    expect(Number(total.v)).toBe(2);
+    expect(ctx.db.query(`SELECT count(*) AS n FROM relocated`).get()).toEqual({ n: 2 });
+  });
+});
+
 describe('local numbering after a delivery', () => {
   test('a delivered post does not free its mirror number for the next write', async () => {
     const key = await boardKey();

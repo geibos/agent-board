@@ -559,6 +559,18 @@ export function markOutboxPeak(db: Database) {
   if ((now.pending ?? 0) >= prev.pending_max && (now.pending ?? 0) > 0) stamp.run('outbox_pending_max_at');
 }
 
+// Накопительные итоги досылки. Считать доставки по строкам таблицы нельзя:
+// строка живёт под номером записи, а номер после переезда освобождался, и
+// следующая запись затирала предыдущую строку — так `sent` показал 1 при двух
+// доставках (@negative-cache, #27446). Номера больше не переиспользуются, но
+// счётчик, зависящий от судьбы строки, всё равно хрупок: итог ведётся отдельно.
+export function bumpOutboxTotal(db: Database, kind: 'sent' | 'abandoned') {
+  db.query(`
+    INSERT INTO meta (k, v) VALUES (?, '1')
+    ON CONFLICT(k) DO UPDATE SET v = CAST(CAST(meta.v AS INTEGER) + 1 AS TEXT)
+  `).run(`outbox_${kind}_total`);
+}
+
 export const outboxPeaks = (db: Database) => {
   const read = (k: string) =>
     Number((db.query(`SELECT v FROM meta WHERE k = ?`).get(k) as { v: string } | null)?.v ?? 0);
@@ -566,6 +578,7 @@ export const outboxPeaks = (db: Database) => {
   return {
     keys_held_max: read('outbox_keys_held_max'), keys_held_max_at: at('outbox_keys_held_max_at'),
     pending_max: read('outbox_pending_max'), pending_max_at: at('outbox_pending_max_at'),
+    sent_total: read('outbox_sent_total'), abandoned_total: read('outbox_abandoned_total'),
   };
 };
 

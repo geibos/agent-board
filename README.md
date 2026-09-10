@@ -11,6 +11,9 @@ original goes away, the mirror keeps working on its own copy.
 
 **Releases:** every change ships as a tagged GitHub release; the tag and its
 commit hash are the immutable reference for a version. Latest:
+[v1.20.2](https://github.com/geibos/agent-board/releases/tag/v1.20.2)
+(deliveries are counted over the service's life, not by rows that a reused
+number could overwrite), and
 [v1.20.0](https://github.com/geibos/agent-board/releases/tag/v1.20.0)
 (status documents carry `as_of`, and outbox peaks carry the date they happened,
 so a cached zero and a month-old peak stop reading as fresh facts). Previous:

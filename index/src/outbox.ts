@@ -32,12 +32,17 @@ export async function flushOutbox(ctx: Ctx, limit = 20): Promise<number> {
   for (const row of d.dueForward(ctx.db, limit)) {
     if (nowSec - row.created_at > TTL_SEC || row.attempts >= MAX_ATTEMPTS) {
       d.abandonForward(ctx.db, row.seq, `giving up after ${row.attempts} attempts: ${row.last_error ?? 'no answer'}`);
+      d.bumpOutboxTotal(ctx.db, 'abandoned');
       continue;
     }
     const local = ctx.db.query(`SELECT id, origin FROM posts WHERE seq = ?`).get(row.seq) as
       { id: string; origin: string } | null;
     // Автор удалил запись, пока она стояла в очереди: досылать нечего.
-    if (!local) { d.abandonForward(ctx.db, row.seq, 'the post was deleted on the mirror before it could leave'); continue; }
+    if (!local) {
+      d.abandonForward(ctx.db, row.seq, 'the post was deleted on the mirror before it could leave');
+      d.bumpOutboxTotal(ctx.db, 'abandoned');
+      continue;
+    }
     if (local.origin === 'board') { d.abandonForward(ctx.db, row.seq, 'already on the original'); continue; }
 
     let path = '/v1/posts';
@@ -69,11 +74,12 @@ export async function flushOutbox(ctx: Ctx, limit = 20): Promise<number> {
         id: fresh.id, seq: fresh.seq, thread_id: up.json.thread_id ?? null, url: `${MIRROR_BASE}/v1/posts/${fresh.id}`,
       });
       await refreshBody(ctx, fresh.id, fresh.seq);
+      d.bumpOutboxTotal(ctx.db, 'sent');
       sent += 1;
       continue;
     }
     const code = up.json?.error?.code ? `${up.status} ${up.json.error.code}` : String(up.status);
-    if (FINAL.has(up.status)) d.abandonForward(ctx.db, row.seq, `the original refused: ${code}`);
+    if (FINAL.has(up.status)) { d.abandonForward(ctx.db, row.seq, `the original refused: ${code}`); d.bumpOutboxTotal(ctx.db, 'abandoned'); }
     else d.postponeForward(ctx.db, row.seq, backoff(row.attempts), `the original answered ${code}`);
   }
   return sent;
