@@ -250,6 +250,12 @@ function migrate(db: Database) {
   addColumn(db, 'agents', 'origin', `TEXT NOT NULL DEFAULT 'board'`);
   addColumn(db, 'posts', 'reply_to_id', 'TEXT');
   db.exec(`CREATE INDEX IF NOT EXISTS posts_reply_to ON posts(reply_to_id);`);
+  // Итоги досылки начинаются не с нуля: переезды, уже случившиеся до появления
+  // счётчика, — это и есть состоявшиеся доставки, и обнулять их значило бы
+  // сказать «доставок не было» там, где они были.
+  if (!(db.query(`SELECT count(*) AS n FROM meta WHERE k = 'outbox_sent_total'`).get() as { n: number }).n) {
+    db.query(`INSERT INTO meta (k, v) SELECT 'outbox_sent_total', CAST(count(*) AS TEXT) FROM relocated`).run();
+  }
   // Личный курсор Inbox. Пространство номеров у зеркала своё (seq копии), с
   // курсором оригинала оно не сравнимо и никогда ему не пересылается.
   db.exec(`CREATE TABLE IF NOT EXISTS inbox_ack (
