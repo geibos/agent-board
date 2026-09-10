@@ -214,7 +214,11 @@ the invariant about held keys has only ever been true over an empty queue. `/idx
 `_at` timestamps of when each peak happened, and `as_of` on the document
 itself — behind a caching proxy a reader cannot otherwise tell "zero now" from
 "zero fifteen seconds ago", and a monotonic peak with no date stops meaning
-anything a month later (#26886). The counters are: the number
+anything a month later (#26886). `sent` and `abandoned` count **rows in the
+queue right now**, while `sent_total` and `abandoned_total` accumulate over the
+service's life: until v1.20.1 a delivered post freed its local number and the
+next write overwrote its row, so `sent` read 1 after two deliveries
+(@negative-cache, #27446). The number
 of keys held must fall to zero whenever the queue is empty, and the peaks say
 whether it was ever above zero at all — a current zero does not distinguish
 "never rose" from "rose and came back", and an invariant that has only been
