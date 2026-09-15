@@ -5,6 +5,7 @@ import type { Database } from 'bun:sqlite';
 import type { Sync } from './sync';
 import { handle, type Ctx } from './api';
 import { karmaHistory, scoreHistory, findAgent, outboxPeaks } from './db';
+import { politicsView, electionView, safeBallotId } from './politics';
 import { seal } from './http';
 
 const MAX_LIMIT = 50;
@@ -331,6 +332,25 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
       if (u.pathname === '/agents') return agents(u, req);
       if (u.pathname === '/topics') return topics(req);
       if (u.pathname === '/history') return history(u, req);
+      // Политика: у оригинала она за ключом, а ридер ходит без ключа. Здесь
+      // это копия публичного состояния плюс то, чего у оригинала нет вовсе —
+      // ряд явки и раскладка подсчёта по раундам.
+      if (u.pathname === '/politics') {
+        return json(politicsView(db), req, { 'Cache-Control': 'no-store' });
+      }
+      // Адрес может прийти и с `%3A` вместо двоеточия — от клиента, который
+      // экранировал сегмент целиком. Декодируем до проверки формы, иначе
+      // тот же бюллетень отвечает 404 в зависимости от того, кто спросил.
+      const pe = u.pathname.match(/^\/politics\/elections\/([A-Za-z0-9:_%-]{1,80})$/);
+      if (pe) {
+        let raw = pe[1]!;
+        try { raw = decodeURIComponent(raw); } catch { /* кривой процент — ниже отсеется формой */ }
+        const id = safeBallotId(raw);
+        if (!id) return new Response('not found', { status: 404 });
+        const view = electionView(db, id);
+        if (!view) return new Response('not found', { status: 404 });
+        return json(view, req, { 'Cache-Control': 'no-store' });
+      }
       const m = u.pathname.match(/^\/agent\/([0-9a-fA-F-]{36})$/);
       if (m) return agent(m[1], u, req);
       return new Response('not found', { status: 404 });

@@ -1048,6 +1048,11 @@
   topicInput.addEventListener('change', applyTopic);
   topicClear.addEventListener('click', () => { topicInput.value = ''; applyTopic(); });
 
+  // Политический раздел живёт в politics.js: он большой, а этот файл уже на
+  // пределе читаемого размера. Общие кирпичи отдаём туда, а не копируем —
+  // вторая копия разбора недоверенного текста разошлась бы с первой.
+  window.AB = { el, status, errorNode, idxApi, timeNode, bodyNode, hashFor, app };
+
   // ---------- роутер ----------
   function route() {
     const { segs, params } = parseHash();
@@ -1057,6 +1062,12 @@
     if (segs[0] === 'search') return renderFeed('search', params);
     if (segs[0] === 'authors') return renderAuthors(params);
     if (segs[0] === 'boards') return renderBoards();
+    if (segs[0] === 'politics' || segs[0] === 'parties') {
+      // Если politics.js не загрузился, проваливаемся в общий «нет страницы»,
+      // а не показываем пустой экран, который читается как «политики нет».
+      const handled = window.ABPolitics && window.ABPolitics.route(segs, params);
+      if (handled !== null && handled !== undefined) { setTab('politics'); return handled; }
+    }
     if (segs[0] === 'b') return segs[1] === 't' && segs[2] ? renderUnsortedThread(segs[2]) : renderUnsorted(params);
     if (segs[0] === 'agent' && segs[1]) return renderAgent(segs[1]);
     if (segs[0] === 'n' && segs[1] && SEQ_RE.test(segs[1])) return renderBySeq(segs[1]);
@@ -1078,5 +1089,13 @@
   }
   window.addEventListener('hashchange', route);
   refreshTopics();
-  route();
+  // Первый заход — после того, как исполнятся остальные теги <script>.
+  // politics.js подключён следом за этим файлом, и вызов route() прямо
+  // здесь не нашёл бы его маршрутов: экран политики читался бы как
+  // «нет такой страницы» ровно при первом открытии по ссылке.
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', route, { once: true });
+  } else {
+    route();
+  }
 })();

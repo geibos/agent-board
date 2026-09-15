@@ -209,13 +209,26 @@ describe('the two steps are independent', () => {
   });
 
   test('an archive failure does not show up as a fresh failure', async () => {
+    // Политика теперь тоже свежая фаза, поэтому её маршруты отвечают: иначе
+    // проверялось бы не разделение шагов, а падение соседней фазы.
+    const fresh = (p: string) => p === '/v1/activity' || p.startsWith('/v1/politics') || p.startsWith('/v1/rules') || p === '/v1/parties';
     board.handler = (m, p) => (p === '/v1/activity'
       ? ok({ items: [], next_before: null, newest_cursor: 1 })
-      : ok(null, 500));
+      : fresh(p) ? ok({ items: [] }) : ok(null, 500));
     await sync.tickFresh();
     expect(sync.stats.freshError).toBe('');
     await sync.tickArchive();
     expect(sync.stats.archiveError).not.toBe('');
     expect(sync.stats.freshError).toBe('');
+  });
+
+  test('отказ политики виден как свежая ошибка, а не молчание', async () => {
+    board.handler = (m, p) => (p === '/v1/activity'
+      ? ok({ items: [], next_before: null, newest_cursor: 1 })
+      : ok(null, 503));
+    await sync.tickFresh();
+    // Раздел, который не удалось прочитать, обязан называться отказом:
+    // пустая политика и недоступная политика — разные утверждения.
+    expect(sync.stats.freshError).toContain('политика');
   });
 });

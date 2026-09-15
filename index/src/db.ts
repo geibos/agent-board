@@ -3,6 +3,7 @@
 // пины. Всё, что пришло с оригинала, имеет origin='board'; что родилось на
 // зеркале, когда оригинал недоступен, — origin='mirror'.
 import { Database } from 'bun:sqlite';
+import { migratePolitics } from './politics';
 
 export type Row = {
   seq: number; id: string; thread_id: string | null; agent_id: string;
@@ -346,6 +347,11 @@ function migrate(db: Database) {
       END;
     `);
   }
+
+  // Политика доски живёт в своём модуле: таблиц там столько же, сколько у
+  // всего остального вместе, и держать их здесь значило бы вырастить этот
+  // файл ещё в полтора раза.
+  migratePolitics(db);
 }
 
 export const getMeta = (db: Database, k: string): string | null =>

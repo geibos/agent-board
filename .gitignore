@@ -29,3 +29,7 @@ tools/*.title
 tools/watchdog.py
 tools/shot.mjs
 tools/probe.mjs
+
+# Артефакты проверки интерфейса браузером — не часть зеркала.
+.playwright-mcp/
+.DS_Store

@@ -7,6 +7,7 @@ import { getMeta, setMeta, upsertRows, setBody, markBodyMissing, markChecked, ma
 import { syncVotes } from './votes';
 import { warmMeatproxy } from './proxy';
 import { flushOutbox } from './outbox';
+import { syncPolitics } from './politics';
 
 type Feed = { items: Row[]; next_before: number | null; newest_cursor?: number };
 
@@ -56,6 +57,7 @@ export class Sync {
   #board: Board;
   #ctx: Ctx | null;
   stats = { newRows: 0, gapsFilled: 0, bodies: 0, bodyShapeErrors: 0, canaryFailures: 0, karma: 0, pins: 0, unsorted: 0, votes: 0, meatproxy: 0, presenceChecked: 0, withdrawn: 0, forwarded: 0,
+    politics: 0, ballots: 0, politicsAt: 0,
     sweep: null as null | { at: number; pages: number; top: number; floor: number; served: number; withdrawn: number; refetched: number; rescored: number; complete: boolean; cursor: number | null },
     freshTick: 0, archiveTick: 0, freshError: '', archiveError: '',
     backfillDone: false, unsortedBackfillDone: false, lastTick: 0, lastError: '' };
@@ -483,10 +485,34 @@ export class Sync {
       // Карма пишущих сейчас — по свежей полосе, пять агентов в минуту.
       await this.#phase('карма активных', () => this.refreshKarma(5, 'fresh', true));
       await this.#phase('свежее присутствие', () => this.verifyFresh());
+      // Политика — в свежей полосе: бюллетень неизменяем и публичен, но
+      // ряд явки существует только у того, кто спрашивал во время окна.
+      // Раз в пять минут, пока голосование не идёт; раз в минуту, когда идёт.
+      if (this.#ctx) {
+        const ctx = this.#ctx;
+        await this.#phase('политика', async () => {
+          if (Date.now() / 1000 - this.stats.politicsAt < this.#politicsEvery()) return;
+          const r = await syncPolitics(ctx);
+          this.stats.politics += r.calls;
+          this.stats.ballots += r.ballots;
+          this.stats.politicsAt = Math.floor(Date.now() / 1000);
+        });
+      }
     });
     this.stats.freshTick = Math.floor(Date.now() / 1000);
     this.stats.lastTick = this.stats.freshTick;
     setMeta(this.#db, 'last_tick', String(this.stats.lastTick));
+  }
+
+  // Во время голосования бюллетени приходят минутами, и пропущенная минута
+  // — дыра в ряде явки, которую потом взять неоткуда. В остальное время
+  // политическое состояние меняется раз в сутки, и минутный опрос был бы
+  // тратой свежей полосы на неизменные ответы.
+  #politicsEvery(): number {
+    const open = this.#db.query(
+      `SELECT count(*) AS n FROM elections
+       WHERE opens_at <= unixepoch() AND closes_at > unixepoch()`).get() as { n: number } | null;
+    return open && open.n ? 60 : 300;
   }
 
   // Архивный шаг: полнота и сверка того, что уже устоялось. Может занимать
