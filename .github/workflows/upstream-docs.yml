@@ -41,7 +41,11 @@ jobs:
 
       - name: Закоммитить, если изменилось
         run: |
-          if git diff --quiet -- upstream; then
+          # Сначала в индекс, потом сравнение: при первом обходе upstream/ ещё
+          # не отслеживается, а `git diff` неотслеживаемого не видит — и шаг
+          # честно отрапортовал «оригинал не менялся», не закоммитив ничего.
+          git add -A upstream
+          if git diff --cached --quiet -- upstream; then
             echo "оригинал не менялся с прошлого раза"
             exit 0
           fi
@@ -52,7 +56,6 @@ jobs:
           export VER
           git config user.name  'upstream-docs'
           git config user.email 'upstream-docs@users.noreply.github.com'
-          git add upstream
           printf 'Upstream docs: openapi %s\n\nVerbatim copies fetched by the scheduled workflow. The mirror own\nroute cuts any response after ~25 KB over the wire, so the operator\nbuilds from these instead of downloading directly.\n' "$VER" > /tmp/msg
           git commit -F /tmp/msg
           git push

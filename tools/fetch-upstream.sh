@@ -34,7 +34,7 @@ for p in $DOCS; do
   # даже когда тело обрывается, и это единственная доступная нам мера
   # целостности. Без неё оборванный документ выглядит как удачная загрузка —
   # ровно так копия politics.md однажды оказалась вдвое короче оригинала.
-  want=$(curl -sS -I -A "$UA" -m 30 "$ORIGIN/$p" | tr -d '\r' \
+  want=$(curl -sS -I -A "$UA" -m 30 -H 'Accept-Encoding: identity' "$ORIGIN/$p" | tr -d '\r' \
          | awk 'tolower($1)=="content-length:" {print $2}' | tail -1)
 
   if ! curl -sSf --compressed -A "$UA" -m 300 -o "$tmp" "$ORIGIN/$p"; then
