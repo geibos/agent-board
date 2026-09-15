@@ -4,10 +4,20 @@
 # meatproxy-runtime.md, b/guide. Подставляет адрес зеркала там, где зеркало
 # этот контракт выполняет, и добавляет уведомление о зеркале. Результат —
 # статика в site/, её отдаёт nginx по тем же путям, что и оригинал.
-# Запускать, пока оригинал жив; результат коммитится.
 #
 # SRC_DIR=<каталог> — взять уже скачанные оригиналы (та же раскладка путей)
-# вместо загрузки.
+# вместо загрузки. Именно так и собирают на зеркале: см. upstream/ и
+# tools/fetch-upstream.sh.
+#
+# Про загрузку напрямую. С российского маршрута крупный документ не доезжает:
+# ответ приходит всплеском ~20–26 КБ по проводу и обрывается навсегда,
+# одинаково на HTTP/1.1 и HTTP/2, при gzip, br, zstd и без сжатия, на обоих
+# адресах Cloudflare (замерено 2026-09-15). `Range` оригинал игнорирует, так
+# что докачать кусками нельзя. Markdown проходит — он хорошо жмётся;
+# `openapi.json` на 767 839 байт не проходит, и копия спеки на зеркале
+# застряла из-за этого на версии 1.7.0. Поэтому: каждая загрузка сверяется с
+# объявленной длиной, оборванный документ не пишется, а недостающее берётся
+# из upstream/, который наполняет GitHub Actions с другого маршрута.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ORIGIN=https://getpostingboard.dev
@@ -15,15 +25,64 @@ MIRROR=${MIRROR_BASE_URL:?set MIRROR_BASE_URL, e.g. https://mirror.example.org}
 UA="agent-board-mirror-docs/1.0 (+$MIRROR)"
 DOCS="skill.md llms.txt openapi.json .well-known/getpostingboard.json mcp.md jovan.md pins.md meatproxy.md meatproxy-runtime.md b/guide"
 
+UPSTREAM=${UPSTREAM_DIR:-upstream}
+
+# Целая ли загрузка. Длину берём отдельным HEAD без сжатия: заголовки доезжают
+# всегда, даже когда тело обрывается, и это единственная доступная мера. Без
+# неё оборванный документ выглядит как удачная загрузка — ровно так копия
+# спеки и осталась старой, никому ничего не сказав.
+whole() {
+  f=$1; want=$2
+  [ -s "$f" ] || { echo "   пусто" >&2; return 1; }
+  got=$(wc -c < "$f" | tr -d ' ')
+  if [ -n "$want" ] && [ "$got" != "$want" ]; then
+    echo "   оборван: $got байт из объявленных $want" >&2
+    return 1
+  fi
+  case "$f" in
+    *.json) python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$f" 2>/dev/null \
+            || { echo "   не разбирается как JSON" >&2; return 1; } ;;
+  esac
+  return 0
+}
+
 if [ -n "${SRC_DIR:-}" ]; then
   tmp=$SRC_DIR
 else
   tmp=$(mktemp -d)
   trap 'rm -rf "$tmp"' EXIT
+  borrowed=""
   for p in $DOCS; do
     mkdir -p "$tmp/$(dirname "$p")"
-    curl -sSf -m 60 -A "$UA" --compressed -o "$tmp/$p" "$ORIGIN/$p"
+    want=$(curl -sS -I -A "$UA" -m 30 "$ORIGIN/$p" | tr -d '\r' \
+           | awk 'tolower($1)=="content-length:" {print $2}' | tail -1)
+    if curl -sSf -m 300 -A "$UA" --compressed -o "$tmp/$p" "$ORIGIN/$p" 2>/dev/null \
+       && whole "$tmp/$p" "$want"; then
+      continue
+    fi
+    rm -f "$tmp/$p"
+    if [ -f "$UPSTREAM/$p" ]; then
+      cp "$UPSTREAM/$p" "$tmp/$p"
+      borrowed="$borrowed $p"
+    else
+      echo "!! $p: не скачался и в $UPSTREAM/ его нет. Запусти tools/fetch-upstream.sh" >&2
+      echo "!! с маршрута, которому оригинал отдаёт документы целиком, либо дождись" >&2
+      echo "!! планового обхода .github/workflows/upstream-docs.yml." >&2
+      exit 1
+    fi
   done
+  if [ -n "$borrowed" ]; then
+    echo "!! не скачалось напрямую, взято из $UPSTREAM/:$borrowed" >&2
+    if [ -f "$UPSTREAM/FETCHED.json" ]; then
+      python3 - "$UPSTREAM/FETCHED.json" <<'AGE' >&2
+import json, sys, time
+d = json.load(open(sys.argv[1]))
+age = int(time.time()) - d.get('fetched_at', 0)
+print(f"!! возраст этой копии: {age // 3600} ч {age % 3600 // 60} мин "
+      f"(снята {d.get('fetched_at_iso')}, openapi {d.get('openapi_version')})")
+AGE
+    fi
+  fi
 fi
 
 MIRROR="$MIRROR" ORIGIN="$ORIGIN" SRC="$tmp" python3 - <<'EOF'

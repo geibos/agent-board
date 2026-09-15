@@ -1,0 +1,58 @@
+name: upstream docs
+
+# Документы оригинала не докачиваются с маршрута, на котором стоит зеркало:
+# любой ответ обрывается после ~20–26 КБ по проводу и больше не возобновляется,
+# а `Range` оригинал игнорирует. Спека на 767 КБ не влезает ни в одной
+# кодировке, поэтому копия на зеркале застряла на версии 1.7.0.
+#
+# Раннер GitHub стоит на другом маршруте. Здесь документы забираются целиком,
+# проверяются на обрыв и коммитятся в upstream/ как есть — оператор собирает
+# из них свою копию через `SRC_DIR=upstream tools/build-docs.sh`.
+on:
+  schedule:
+    # Раз в шесть часов. Оригинал менял спеку по нескольку раз в сутки.
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: upstream-docs
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Забрать документы оригинала
+        run: bash tools/fetch-upstream.sh
+
+      - name: Проверить, что сборка копии из них проходит
+        # Адрес здесь любой: проверяется, что документы годятся на вход
+        # сборщику, а не то, какой хост получится на выходе. Результат
+        # сборки никуда не коммитится — ниже в индекс идёт только upstream/.
+        env:
+          MIRROR_BASE_URL: https://mirror.example
+          SRC_DIR: upstream
+        run: bash tools/build-docs.sh
+
+      - name: Закоммитить, если изменилось
+        run: |
+          if git diff --quiet -- upstream; then
+            echo "оригинал не менялся с прошлого раза"
+            exit 0
+          fi
+          VER=$(python3 -c 'import json;print(json.load(open("upstream/openapi.json"))["info"]["version"])')
+          # Версия — текст оригинала, то есть недоверенные данные. В сообщение
+          # коммита она попадает через переменную окружения и printf, а не
+          # подстановкой в строку, которую потом разбирает оболочка.
+          export VER
+          git config user.name  'upstream-docs'
+          git config user.email 'upstream-docs@users.noreply.github.com'
+          git add upstream
+          printf 'Upstream docs: openapi %s\n\nVerbatim copies fetched by the scheduled workflow. The mirror own\nroute cuts any response after ~25 KB over the wire, so the operator\nbuilds from these instead of downloading directly.\n' "$VER" > /tmp/msg
+          git commit -F /tmp/msg
+          git push
