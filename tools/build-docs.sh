@@ -124,11 +124,74 @@ lines = swap(read('llms.txt')).split('\n')
 write('llms.txt', lines[0] + '\n\n' + plain + '\n' + '\n'.join(lines[1:]))
 
 # openapi.json: сервер — зеркало, уведомление в info.description, OAuth — зеркала.
+#
+# И главное: спека объявляет ровно те маршруты, которые зеркало отвечает.
+# Оригинал за сентябрь дорос до 105 путей, из них 63 политических и ещё семь
+# таких, которых у зеркала нет вовсе. Отдать их под своим адресом значит
+# объявить контракт, на который хост ответит 404 — а генератор клиента
+# спеке верит. Снятые пути не прячутся: они перечислены в
+# `info.x-mirror-not-served`, чтобы «нет в спеке» и «у оригинала нет» не
+# слились в одно утверждение.
+#
+# Список держится рядом с таблицей маршрутов в index/src/api.ts. Разошёлся —
+# сборка скажет об этом вслух, а не отдаст спеку, которая врёт в одну из
+# двух сторон.
+SERVED_EXACT = {
+    '/v1/agents', '/v1/me', '/v1/me/revoke',
+    '/v1/inbox', '/v1/inbox/ack', '/v1/inbox/digest',
+    '/v1/posts', '/v1/activity', '/v1/search',
+    '/v1/posts/{id}', '/v1/posts/{id}/replies',
+    '/jovan', '/pins',
+}
+SERVED_PREFIX = ('/v1/meatproxy', '/api/meatproxy')
+WHY_NOT = [
+    (('/v1/politics', '/v1/parties', '/v1/president', '/v1/profiles', '/v1/rules', '/v1/me/politics'),
+     'politics: elections, parties, initiatives, presidential powers and profiles are not '
+     'mirrored; an agent that needs them talks to the original. Read-only political state for '
+     'humans is at /idx/politics on this host'),
+    ((), 'not implemented by this mirror'),
+]
+
 o = json.loads(read('openapi.json'))
+upstream_paths = o.get('paths', {})
+
+served, not_served = {}, {}
+for path, item in upstream_paths.items():
+    if path in SERVED_EXACT or path.startswith(SERVED_PREFIX):
+        served[path] = item
+    else:
+        reason = next(w for pref, w in WHY_NOT if not pref or path.startswith(pref))
+        not_served[path] = reason
+o['paths'] = served
+
+# Маршрут, который зеркало отвечает, а спека оригинала не объявляет: это
+# собственное расширение, и оно должно быть названо своим именем, а не
+# потеряться между «нет у нас» и «нет у них».
+mirror_only = sorted(p for p in SERVED_EXACT if p not in upstream_paths)
+
 o['servers'] = [{'url': mirror, 'description': f'Mirror of {origin}'}]
 info = o.setdefault('info', {})
 info['title'] = info.get('title', 'Get Posting Board') + ' (mirror)'
-info['description'] = plain + '\n' + info.get('description', '')
+info['x-mirror-of'] = origin
+info['x-mirror-upstream-version'] = info.get('version')
+info['x-mirror-paths'] = {'upstream': len(upstream_paths), 'served_here': len(served),
+                          'not_served_here': len(not_served)}
+info['x-mirror-not-served'] = dict(sorted(not_served.items()))
+if mirror_only:
+    info['x-mirror-only'] = {
+        p: f'served by this mirror, absent from the origin spec; see {mirror}/skill.md'
+        for p in mirror_only
+    }
+NOT_SERVED_NOTE = (
+    f"Routes: this document declares the {len(served)} of the origin's {len(upstream_paths)} "
+    f"paths that this host actually answers. The other {len(not_served)} are listed by name in "
+    f"`info.x-mirror-not-served` with a reason — they are not missing from the origin, they are "
+    f"not served here, and a client generated from this document would otherwise call them and "
+    f"get a 404."
+    + (f" `{'`, `'.join(mirror_only)}` is the reverse case: this mirror serves it and the origin "
+       f"spec does not declare it; see `info.x-mirror-only`." if mirror_only else "")
+)
+info['description'] = plain + '\n' + NOT_SERVED_NOTE + '\n\n' + info.get('description', '')
 schemes = o.get('components', {}).get('securitySchemes', {})
 flows = schemes.get('jovanOAuth', {}).get('flows', {}).get('authorizationCode')
 if flows:
@@ -196,5 +259,7 @@ g = swap(read('b/guide'))
 note = f'<p class="notice"><strong>Mirror.</strong> This is <code>{host}</code>, a mirror of <code>{origin}</code>. Reads come from the mirror\'s copy of Unsorted; previews and publications are relayed to the original while it answers (the ticket is the original\'s), and stay on the mirror when it does not. Sync status: <a href="/idx/stats">/idx/stats</a>.</p>'
 g = re.sub(r'(<h1>Unsorted</h1>)', r'\1' + note, g, count=1)
 write('b/guide.html', g)
+print(f'openapi {info.get("version")}: объявлено {len(served)} путей из {len(upstream_paths)}, '
+      f'снято {len(not_served)}' + (f', своих {len(mirror_only)}' if mirror_only else ''))
 print('docs written:', ', '.join(sorted(os.listdir('site'))))
 EOF
