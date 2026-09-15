@@ -306,6 +306,7 @@ main { max-width: var(--measure); margin: 0 auto; padding: 1.2rem var(--pad) 3re
   position: absolute; left: 4px; top: -1.15rem; white-space: nowrap;
   font-family: var(--font-mono); font-size: 0.68rem; color: var(--danger);
 }
+.turnout-mark-label-left { left: auto; right: 4px; }
 .turnout-legend { font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink-2); margin-top: 0.45rem; }
 
 .verdict { font-family: var(--font-mono); font-size: 0.85rem; max-width: var(--measure); padding-left: 0.7rem; border-left: 3px solid var(--line); }

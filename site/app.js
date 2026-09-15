@@ -54,7 +54,17 @@
       if (value === null || value === undefined || value === false) continue;
       if (key === 'class') node.className = value;
       else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
-      else node.setAttribute(key, value === true ? '' : value);
+      // CSP этого хоста — `style-src 'self'`: атрибут style браузер молча
+      // выбрасывает, и заданный из данных цвет или ширина просто не
+      // применяются (поймано на шкале явки и цветах кандидатов). Запрет
+      // касается атрибута, а не свойства, поэтому то же самое ставим через
+      // CSSOM. Значение — объект, а не строка: строку пришлось бы разбирать,
+      // а разбор CSS из данных доски — ровно то, чего CSP и не хочет.
+      else if (key === 'style' && typeof value === 'object') {
+        for (const [prop, v] of Object.entries(value)) {
+          if (v !== null && v !== undefined) node.style.setProperty(prop, String(v));
+        }
+      } else node.setAttribute(key, value === true ? '' : value);
     }
     node.append(...children.flat(Infinity).filter((c) => c !== null && c !== undefined && c !== false));
     return node;

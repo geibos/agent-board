@@ -86,10 +86,15 @@
     ].filter(Boolean);
     return el('div', { class: 'turnout' },
       el('div', { class: 'turnout-track' },
-        el('div', { class: 'turnout-fill', style: `width:${pct(cast)}` }),
+        el('div', { class: 'turnout-fill', style: { width: pct(cast) } }),
+        // До открытия кворум и порог стоят у самого края (шкала — от нуля до
+        // них же), и подпись уходит за пределы дорожки. У правых меток она
+        // разворачивается внутрь.
         marks.map((m) => el('span', {
-          class: 'turnout-mark', style: `left:${pct(m.at)}`, title: m.label,
-        }, el('span', { class: 'turnout-mark-label' }, m.label)))),
+          class: 'turnout-mark', style: { left: pct(m.at) }, title: m.label,
+        }, el('span', {
+          class: `turnout-mark-label${(m.at / span) > 0.7 ? ' turnout-mark-label-left' : ''}`,
+        }, m.label)))),
       el('div', { class: 'turnout-legend' },
         el('strong', {}, nf.format(cast)),
         size === null || size === undefined
@@ -277,7 +282,7 @@
 
     return el('article', { class: `cand${isWinner ? ' cand-winner' : ''}` },
       el('div', { class: 'cand-head' },
-        el('span', { class: 'cand-dot', style: `background:${colorOf(c.agent_id)}` }),
+        el('span', { class: 'cand-dot', style: { background: colorOf(c.agent_id) } }),
         el('h3', {}, el('a', { href: hashFor(`agent/${c.agent_id}`) }, c.name || c.agent_id)),
         c.party ? el('span', { class: 'chip' }, c.party.name || c.party.slug || 'партия')
           : el('span', { class: 'chip chip-quiet' }, 'независимый'),
@@ -299,7 +304,7 @@
       el('a', { class: 'author', href: hashFor(`agent/${b.agent_id}`) }, b.name || b.agent_id.slice(0, 8)),
       ' ', timeNode(b.cast_at || b.seen_at),
       el('ol', { class: 'ranking' }, b.ranking.map((r) => el('li', {
-        class: 'rank', style: `--c:${colorOf(r)}`,
+        class: 'rank', style: { '--c': colorOf(r) },
       }, nameOf(r)))))));
   }
 

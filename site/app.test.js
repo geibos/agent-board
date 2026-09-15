@@ -10,11 +10,25 @@ const assert = require('node:assert/strict');
 // и подмена ссылок не трогают документ.
 function loadInternals() {
   const path = require.resolve('./app.js');
-  const source = readFileSync(path, 'utf8').replace(
-    /  window\.addEventListener\('hashchange',[\s\S]*?\n  route\(\);\n\}\)\(\);\n?$/,
-    '  globalThis.__test = { internalHref, parseMarkdown };\n})();\n',
-  );
+  const raw = readFileSync(path, 'utf8');
+  // Отрезаем всё от подписки на hashchange до конца файла: дальше идёт
+  // первый заход в роутер, которому нужен настоящий DOM. Форма хвоста
+  // менялась (первый route() уехал в DOMContentLoaded, когда появился
+  // politics.js), поэтому якорь — только начало, а не начало и конец.
+  const cut = raw.indexOf("  window.addEventListener('hashchange'");
+  assert.ok(cut > 0, 'не нашёл хвост app.js — тест загружает не тот файл');
+  const source = `${raw.slice(0, cut)}  globalThis.__test = { internalHref, parseMarkdown, el };\n})();\n`;
   const element = { addEventListener() {} };
+  // Узел ровно настолько, чтобы el() отработал: className, атрибуты и
+  // CSSOM-стиль. Больше DOM здесь не нужен, и подделывать его целиком
+  // значило бы проверять подделку, а не app.js.
+  const makeNode = (tag) => ({
+    tagName: tag, className: '', attrs: {}, children: [], styles: {},
+    style: { setProperty(prop, v) { this.__owner.styles[prop] = v; } },
+    setAttribute(k, v) { this.attrs[k] = v; },
+    addEventListener() {},
+    append(...kids) { this.children.push(...kids); },
+  });
   const context = {
     URL,
     URLSearchParams,
@@ -24,13 +38,14 @@ function loadInternals() {
     document: {
       getElementById: () => element,
       querySelectorAll: () => [],
+      createElement: (tag) => { const n = makeNode(tag); n.style.__owner = n; return n; },
     },
   };
   runInNewContext(source, context, { filename: path });
   return context.__test;
 }
 
-const { internalHref, parseMarkdown } = loadInternals();
+const { internalHref, parseMarkdown, el } = loadInternals();
 
 describe('internalHref', () => {
   test('не подменяет служебные URL зеркала hash-маршрутом ридера', () => {
@@ -44,6 +59,24 @@ describe('internalHref', () => {
       internalHref('https://getpostingboard.dev/v1/posts/11111111-1111-4111-8111-111111111111'),
       '#/thread/11111111-1111-4111-8111-111111111111',
     );
+  });
+});
+
+describe('el: стиль', () => {
+  // CSP этого хоста — `style-src 'self'`: атрибут style браузер молча
+  // выбрасывает, и цвет кандидата или ширина шкалы просто не появляются.
+  // Поймано на проде уже после выката, поэтому проверяется здесь.
+  test('стиль ставится через CSSOM, а не атрибутом style', () => {
+    const node = el('div', { class: 'turnout-fill', style: { width: '42%' } });
+    assert.equal(node.styles.width, '42%');
+    assert.equal(node.attrs.style, undefined, 'атрибут style запрещён политикой безопасности');
+    assert.equal(node.className, 'turnout-fill');
+  });
+
+  test('пользовательское свойство проходит тем же путём', () => {
+    const node = el('li', { style: { '--c': 'oklch(62% 0.15 200)' } });
+    assert.equal(node.styles['--c'], 'oklch(62% 0.15 200)');
+    assert.equal(node.attrs.style, undefined);
   });
 });
 
