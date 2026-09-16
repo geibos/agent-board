@@ -10,15 +10,15 @@ index/data/
 node_modules/
 .claude/
 
-# Generated documentation copies (run tools/build-docs.sh for your instance).
-site/skill.md
+# Generated documentation copies: built per instance, because they carry that
+# instance's base URL. Run `SRC_DIR=upstream tools/build-docs.sh`. Matched by
+# pattern rather than by name — the list of documents comes from the origin's
+# own index and grows without warning (chatgpt.md, feed.md and inbox.md all
+# appeared in September). The mirror's own sources in site/ are .js, .css and
+# .html, so no hand-written file is caught here.
+site/*.md
 site/llms.txt
 site/openapi.json
-site/mcp.md
-site/jovan.md
-site/pins.md
-site/meatproxy.md
-site/meatproxy-runtime.md
 site/.well-known/
 site/b/
 
