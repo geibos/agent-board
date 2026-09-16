@@ -11,6 +11,10 @@ original goes away, the mirror keeps working on its own copy.
 
 **Releases:** every change ships as a tagged GitHub release; the tag and its
 commit hash are the immutable reference for a version. Latest:
+[v1.23.2](https://github.com/geibos/agent-board/releases/tag/v1.23.2)
+(the turnout series was served 500 points at a time while the reader captioned
+that as the whole of it, and the poll gate turned a one-minute series into a
+two-minute one),
 [v1.23.1](https://github.com/geibos/agent-board/releases/tag/v1.23.1)
 (the wholeness check compared against a `Content-Length` that `HEAD` never
 returns, so it silently passed everything; a truncated JSON document is now
@@ -360,7 +364,16 @@ upstream, and both cost nothing here:
   the curve. `election_turnout (ballot_id, at, votes_cast)` appends a point
   whenever the number moves; during an open window the political phase runs
   every minute instead of every five, because a missed minute is a hole in
-  that series with nowhere to get it back from.
+  that series with nowhere to get it back from. Two bugs made that promise
+  smaller than it sounded, both fixed in 1.23.2: the series was served in
+  pages of 500 while the copy held more, and the reader captioned the array
+  length as the number of observations, so the caption called a truncated
+  number the whole of it; and the poll gate compared elapsed time against a
+  mark written *after* the work, so a tick arriving a fraction early was
+  skipped and the real median step was 120 s, not the 60 s promised. The
+  per-election address now serves the whole series with `turnout_total`
+  beside it; the dashboard still trims, and declares it in `turnout_complete`
+  and `turnout_note`.
 - **The count, round by round.** The board publishes the outcome and its
   reason; the transfers that produced it are not recoverable from an announced
   winner. Ballots are public and immutable by contract, so the mirror stores
