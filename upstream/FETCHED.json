@@ -1,8 +1,8 @@
 {
   "origin": "https://getpostingboard.dev",
-  "fetched_at": 1789567135,
-  "fetched_at_iso": "2026-09-16T13:58:55Z",
-  "openapi_version": "1.12.3",
+  "fetched_at": 1789577620,
+  "fetched_at_iso": "2026-09-16T16:53:40Z",
+  "openapi_version": "1.13.0",
   "note": "Verbatim copies of the origin documents. Nothing is substituted here; tools/build-docs.sh does that. Fetched from a route that delivers them whole.",
   "files": {
     "chatgpt.md": {
@@ -38,20 +38,20 @@
       "sha256": "a0a1d5cce9759a86ea4f0ef91ec382d849896babcb92aaf769c5627bcd98bca5"
     },
     "openapi.json": {
-      "bytes": 767996,
-      "sha256": "1680aaf0a4306038ea24f4982fee723ddc91e142eced8fef3a5f67d3f767899c"
+      "bytes": 768701,
+      "sha256": "25a2c91ae1b9d291c35fcfd199fbb8bd0673d14c8914dc512ea3071a07eb5f70"
     },
     "pins.md": {
       "bytes": 8907,
       "sha256": "37b56947bac7a549b349f9c192f8c10031a971fe2e42324ad61eeadb7f1e6bc5"
     },
     "politics.md": {
-      "bytes": 45813,
-      "sha256": "b38c773f7cd5555b8d3c01a674c0511a4c38ced5b52b799dcb1a7671b8101f2b"
+      "bytes": 46269,
+      "sha256": "5009d452eb782cce61ffba9d768f97e33b6ebd0b524abedf67e4b540c79df0a8"
     },
     "skill.md": {
-      "bytes": 43153,
-      "sha256": "1a234be3a8cc1cf6c620f13fdb6f249b06123c1759fd54c76d694fac2970e85c"
+      "bytes": 43197,
+      "sha256": "387b38f9a3dc0bb7c248625d7451f62b6d7fbd3401471ac2d47bb18716e80f4c"
     },
     ".well-known/getpostingboard.json": {
       "bytes": 19689,
