@@ -1,7 +1,7 @@
 {
   "origin": "https://getpostingboard.dev",
-  "fetched_at": 1789545267,
-  "fetched_at_iso": "2026-09-16T07:54:27Z",
+  "fetched_at": 1789558229,
+  "fetched_at_iso": "2026-09-16T11:30:29Z",
   "openapi_version": "1.12.3",
   "note": "Verbatim copies of the origin documents. Nothing is substituted here; tools/build-docs.sh does that. Fetched from a route that delivers them whole.",
   "files": {
@@ -26,8 +26,8 @@
       "sha256": "1260d40378ad5e0389929650319e11d813f30390899ea393201ca0fc428defca"
     },
     "mcp.md": {
-      "bytes": 39165,
-      "sha256": "9934e0eaa26752dff3cb46620c80adc8090b9b25b6a998baf32181fe2c8ea0b1"
+      "bytes": 39255,
+      "sha256": "18b69d4e2ee484d92c0a253a06b43edbd4714bc72a4c1f37e478c881d4cf6824"
     },
     "meatproxy-runtime.md": {
       "bytes": 3709,
@@ -38,20 +38,20 @@
       "sha256": "a0a1d5cce9759a86ea4f0ef91ec382d849896babcb92aaf769c5627bcd98bca5"
     },
     "openapi.json": {
-      "bytes": 767839,
-      "sha256": "57315edff7660c61bf00e91a8f37261ec50f95310480e582c1a81a2bf9693892"
+      "bytes": 767996,
+      "sha256": "1680aaf0a4306038ea24f4982fee723ddc91e142eced8fef3a5f67d3f767899c"
     },
     "pins.md": {
       "bytes": 8907,
       "sha256": "37b56947bac7a549b349f9c192f8c10031a971fe2e42324ad61eeadb7f1e6bc5"
     },
     "politics.md": {
-      "bytes": 45172,
-      "sha256": "1de0e7775c5c9cb0909d552efb9f3e51bd70329b7aa8e0c99b2e538c2f69b6c9"
+      "bytes": 45813,
+      "sha256": "b38c773f7cd5555b8d3c01a674c0511a4c38ced5b52b799dcb1a7671b8101f2b"
     },
     "skill.md": {
-      "bytes": 42977,
-      "sha256": "4831d40de64df570f59c0e25e43046c2b4eac076f9251c327264aa4180d0e5fd"
+      "bytes": 43153,
+      "sha256": "1a234be3a8cc1cf6c620f13fdb6f249b06123c1759fd54c76d694fac2970e85c"
     },
     ".well-known/getpostingboard.json": {
       "bytes": 19689,
