@@ -25,14 +25,46 @@
     return node;
   };
 
-  // Цвет кандидата — от идентификатора, а не от места в списке: перестановка
-  // при переносе голосов не должна перекрашивать людей на середине подсчёта.
-  function hueOf(id) {
-    let h = 2166136261;
-    for (let i = 0; i < id.length; i += 1) { h ^= id.charCodeAt(i); h = Math.imul(h, 16777619); }
-    return ((h >>> 0) % 360);
+  // Палитра выборов: тон по месту в отсортированном списке, а не по хешу от
+  // идентификатора. Хеш на девяти кандидатах столкнулся — glitchfox и runrate
+  // получили ровно один тон (oklch 62% 0.15 41), и это видно на живой
+  // странице. Порядок берётся от идентификаторов, поэтому перестановка при
+  // переносе голосов никого не перекрашивает, а равный шаг по кругу
+  // гарантирует, что два соседа различимы при любом числе кандидатов.
+  function paletteFor(ids) {
+    const list = [...new Set(ids)].filter((x) => x && x !== VACANCY).sort();
+    const n = Math.max(1, list.length);
+    const map = new Map();
+    list.forEach((id, i) => map.set(id, `oklch(62% 0.15 ${Math.round((i * 360) / n + 15) % 360})`));
+    return (id) => (map.get(id) || 'var(--ink-3)');
   }
-  const colorOf = (id) => (id === 'vacancy' ? 'var(--ink-3)' : `oklch(62% 0.15 ${hueOf(id)})`);
+  const VACANCY = 'vacancy';
+
+  const GEOM = { LABEL: 132, COL: 148, GAP: 58, ROW: 26, BAR: 16, TOP: 48, BOT: 30 };
+
+  // Геометрия раундов отдельной чистой функцией, чтобы её инвариант
+  // проверялся тестом, а не обещанием в комментарии: конец столбика со
+  // значением v и отметка на значении v — это одно и то же число `at(i, v)`.
+  // Разойтись они не могут, потому что считаются одним `len`. В прошлой
+  // версии это были две разные меры, и пунктир порога вставал посреди
+  // чужого блока.
+  function roundLayout(rounds, floor, order, g) {
+    const maxV = Math.max(
+      1, floor || 0,
+      ...rounds.map((r) => Math.max(0, ...Object.values(r.counts))),
+      ...rounds.map((r) => r.majority || 0),
+    );
+    const colX = (i) => g.LABEL + i * (g.COL + g.GAP);
+    const rowY = (opt) => g.TOP + order.indexOf(opt) * g.ROW;
+    const len = (v) => (Math.max(0, v) / maxV) * g.COL;
+    return {
+      maxV, colX, rowY, len,
+      mid: (opt) => rowY(opt) + g.BAR / 2,
+      at: (i, v) => colX(i) + len(v),
+      W: g.LABEL + rounds.length * g.COL + (rounds.length - 1) * g.GAP + 30,
+      H: g.TOP + order.length * g.ROW + g.BOT,
+    };
+  }
 
   const nf = new Intl.NumberFormat('ru');
   const utc = new Intl.DateTimeFormat('ru', {
@@ -80,10 +112,17 @@
     const size = t.electorate_size;
     const span = Math.max(size || 0, cast, t.quorum_min || 0, t.floor || 0, 1);
     const pct = (n) => `${Math.min(100, (n / span) * 100)}%`;
+    // Две отметки на одной оси часто оказываются рядом: при N = 25 это
+    // «порог 8» и «кворум 10», подписи которых разошлись на четыре пикселя и
+    // читались как одна строка. Близкие разводим по вертикали.
     const marks = [
-      t.quorum_min ? { at: t.quorum_min, label: `кворум ${t.quorum_min}` } : null,
       t.floor ? { at: t.floor, label: `порог ${t.floor}` } : null,
-    ].filter(Boolean);
+      t.quorum_min ? { at: t.quorum_min, label: `кворум ${t.quorum_min}` } : null,
+    ].filter(Boolean).sort((a, b) => a.at - b.at);
+    marks.forEach((m, i) => {
+      const prev = marks[i - 1];
+      m.below = !!(prev && !prev.below && (m.at - prev.at) / span < 0.18);
+    });
     return el('div', { class: 'turnout' },
       el('div', { class: 'turnout-track' },
         el('div', { class: 'turnout-fill', style: { width: pct(cast) } }),
@@ -93,7 +132,9 @@
         marks.map((m) => el('span', {
           class: 'turnout-mark', style: { left: pct(m.at) }, title: m.label,
         }, el('span', {
-          class: `turnout-mark-label${(m.at / span) > 0.7 ? ' turnout-mark-label-left' : ''}`,
+          class: 'turnout-mark-label'
+            + ((m.at / span) > 0.7 ? ' turnout-mark-label-left' : '')
+            + (m.below ? ' turnout-mark-label-below' : ''),
         }, m.label)))),
       el('div', { class: 'turnout-legend' },
         el('strong', {}, nf.format(cast)),
@@ -126,98 +167,134 @@
   }
 
   // ---------- раунды подсчёта ----------
-  // Санки-диаграмма: колонка на раунд, блок на опцию, лента на перенос.
-  // Ради неё бюллетени и складываются по одному — из объявленного итога
-  // переносы не восстанавливаются ничем.
-  function roundsChart(tally, nameOf) {
+  // Одна опция — одна строка во всех раундах, столбик от общей базовой линии.
+  //
+  // Раньше здесь была санки-диаграмма со стопкой блоков, и она врала: порог
+  // рисовался горизонтальной линией на высоте «F голосов от низа», а блоки
+  // укладывались стопкой сверху, так что пунктир, подписанный «порог победы»,
+  // проходил посреди третьего кандидата (замерено на живых выборах: линия
+  // y = 166.3, блок dao-wanderer 117.9…170.3). В стопке горизонтальная линия
+  // и не может ничего значить — порог сравнивается с одним кандидатом, а не с
+  // накопленной суммой. От общей базы он становится вертикальной осью, и
+  // длина столбика с положением отметки считаются одной функцией.
+  //
+  // Второе, что чинится тем же: на выборах election:0 оба выбывших имели по
+  // нулю голосов, переносить было нечего, и санки выродилась в две одинаковые
+  // колонки под подписью про ленты, которых нет. Столбцы остаются
+  // осмысленными и без единого переноса.
+  function roundsChart(tally, nameOf, colorOf) {
     const rounds = tally.rounds || [];
     if (!rounds.length) return null;
-    const COL = 150, GAP = 92, H = 340, TOP = 44, BOT = 34;
-    const W = rounds.length * COL + (rounds.length - 1) * GAP + 24;
-    const usable = H - TOP - BOT;
-    const maxTotal = Math.max(1, ...rounds.map((r) => r.continuing));
-    const unit = usable / maxTotal;
 
-    // Порядок опций фиксируем по первому раунду: если сортировать каждый
-    // раунд заново, ленты переноса будут пересекаться без причины.
+    // Порядок строк фиксируем по первому раунду: если сортировать каждый
+    // раунд заново, колонки станет нечем сравнивать.
     const order = Object.keys(rounds[0].counts)
       .sort((a, b) => (rounds[0].counts[b] - rounds[0].counts[a]) || a.localeCompare(b));
 
-    const layout = rounds.map((r) => {
-      const box = {};
-      let y = TOP;
-      for (const opt of order) {
+    const g = GEOM;
+    const { COL, BAR, TOP, BOT } = g;
+    const { W, H, maxV, colX, rowY, mid, len, at } = roundLayout(rounds, tally.floor, order, g);
+
+    const hasTransfers = rounds.some((r) => Object.values(r.transfers || {})
+      .some((d) => Object.keys(d).length));
+
+    // Подпись строки обрезается по ширине колонки: `humanizer-ru-crew` в
+    // 17 знаков наезжал на первый столбец. Полное имя остаётся в подсказке.
+    const FIT = Math.floor((g.LABEL - 30) / 6.7);
+    const short = (t) => (t.length > FIT ? `${t.slice(0, FIT - 1)}…` : t);
+    const rowLabels = order.map((opt) => svg('g', {},
+      svg('rect', { x: 8, y: rowY(opt) + 3, width: 10, height: 10, rx: 2, fill: colorOf(opt) }),
+      svg('text', { x: 24, y: rowY(opt) + BAR - 3, class: 'rc-name' }, short(nameOf(opt)),
+        svg('title', {}, nameOf(opt)))));
+
+    const columns = rounds.map((r, i) => {
+      const x = colX(i);
+      const bars = order.map((opt) => {
         const v = r.counts[opt];
-        if (v === undefined) continue;
-        const h = v * unit;
-        box[opt] = { y, h, v };
-        y += h + 4;
-      }
-      return box;
+        if (v === undefined) return null;                 // выбыл в прошлом раунде
+        const dropped = r.eliminated.includes(opt);
+        const w = len(v);
+        return svg('g', { class: 'rc-bar' },
+          // Дорожка строки: без неё столбик в ноль голосов — пустое место, и
+          // «выбывает» на нём негде показать.
+          svg('rect', {
+            x, y: rowY(opt), width: COL, height: BAR, rx: 2,
+            fill: 'var(--ink)', 'fill-opacity': '0.05',
+            stroke: dropped ? 'var(--danger)' : 'none',
+            'stroke-dasharray': dropped ? '3 2' : null, 'stroke-opacity': '0.8',
+          }),
+          w > 0 ? svg('rect', {
+            x, y: rowY(opt), width: w.toFixed(1), height: BAR, rx: 2,
+            fill: colorOf(opt), 'fill-opacity': dropped ? '0.35' : '0.9',
+          }) : null,
+          svg('text', { x: (x + w + 5).toFixed(1), y: rowY(opt) + BAR - 3, class: 'rc-val' }, String(v)),
+          svg('title', {}, `${nameOf(opt)} — ${v} в раунде ${r.round}${dropped ? ', выбывает' : ''}`));
+      });
+
+      // Два порога, и они разные: большинство продолжающих бюллетеней меняется
+      // от раунда к раунду, F от электората — нет. Победа требует обоих.
+      // Подписи двух осей разводим по высоте, а не по горизонтали: порог и
+      // большинство различаются на один голос (8 и 9), и рядом они слипались
+      // в «порболВшинство». У правого края текст разворачивается внутрь,
+      // иначе он уезжает за колонку.
+      const vline = (v, cls, label, top) => {
+        if (!(v > 0 && v <= maxV)) return null;
+        const x = at(i, v);
+        const tail = (x - colX(i)) / COL > 0.72;
+        return svg('g', {},
+          svg('line', { x1: x.toFixed(1), x2: x.toFixed(1), y1: TOP - 6, y2: H - BOT + 2, class: cls }),
+          svg('text', {
+            x: (x + (tail ? -3 : 3)).toFixed(1), y: top ? TOP - 10 : H - BOT + 12,
+            class: `rc-axis ${cls}-t`, 'text-anchor': tail ? 'end' : 'start',
+          }, label));
+      };
+
+      return svg('g', {},
+        svg('text', { x, y: 16, class: 'rc-round' }, `Раунд ${r.round}`),
+        svg('text', { x, y: 30, class: 'rc-sub' },
+          `продолжают ${r.continuing}${r.exhausted ? `, исчерпано ${r.exhausted}` : ''}`),
+        bars,
+        vline(r.majority, 'rc-major', `большинство ${r.majority}`, false),
+        tally.floor ? vline(tally.floor, 'rc-floor', `порог ${tally.floor}`, true) : null);
     });
 
-    const nodes = [];
-    const flows = [];
+    // Переносы: от конца столбика выбывшего к строке получателя в следующем
+    // раунде. Толщина — той же мерой, что и длина столбика.
+    const ribbons = [];
     rounds.forEach((r, i) => {
-      const x = 12 + i * (COL + GAP);
-      for (const [opt, b] of Object.entries(layout[i])) {
-        const dropped = r.eliminated.includes(opt);
-        nodes.push(svg('g', { class: 'sankey-node' },
-          svg('rect', {
-            x, y: b.y.toFixed(1), width: COL, height: Math.max(2, b.h).toFixed(1), rx: 3,
-            fill: colorOf(opt), 'fill-opacity': dropped ? '0.35' : '0.85',
-            stroke: dropped ? 'var(--danger)' : 'none', 'stroke-dasharray': dropped ? '3 2' : null,
-          }, svg('title', {}, `${nameOf(opt)} — ${b.v} в раунде ${r.round}${dropped ? ', выбывает' : ''}`)),
-          b.h >= 15 ? svg('text', {
-            x: x + 8, y: (b.y + b.h / 2 + 4).toFixed(1), class: 'sankey-label',
-          }, `${nameOf(opt)} · ${b.v}`) : null));
-      }
-      // Переносы: лента из выбывшего блока в блок получателя следующего раунда.
-      if (!layout[i + 1]) return;
-      const x2 = 12 + (i + 1) * (COL + GAP);
-      const outY = {}; const inY = {};
+      if (!rounds[i + 1]) return;
+      const x1 = colX(i) + COL;
+      const x2 = colX(i + 1);
       for (const [from, dests] of Object.entries(r.transfers || {})) {
-        const src = layout[i][from];
-        if (!src) continue;
         for (const [to, n] of Object.entries(dests)) {
-          const h = n * unit;
-          const dst = layout[i + 1][to];
-          const y1 = src.y + (outY[from] = (outY[from] ?? 0) + h) - h;
-          const y2 = dst ? dst.y + (inY[to] = (inY[to] ?? 0) + h) - h : H - BOT + 6;
-          const mid = (x + COL + x2) / 2;
-          flows.push(svg('path', {
-            d: `M${x + COL},${y1.toFixed(1)} C${mid},${y1.toFixed(1)} ${mid},${y2.toFixed(1)} ${x2},${y2.toFixed(1)}`
-               + ` L${x2},${(y2 + h).toFixed(1)} C${mid},${(y2 + h).toFixed(1)} ${mid},${(y1 + h).toFixed(1)} ${x + COL},${(y1 + h).toFixed(1)} Z`,
-            fill: colorOf(from), 'fill-opacity': dst ? '0.3' : '0.12',
-          }, svg('title', {}, `${nameOf(from)} → ${dst ? nameOf(to) : 'бюллетень исчерпан'}: ${n}`)));
+          const y1 = mid(from);
+          const y2 = order.includes(to) ? mid(to) : H - BOT + 4;
+          const cx = (x1 + x2) / 2;
+          ribbons.push(svg('path', {
+            d: `M${x1},${y1.toFixed(1)} C${cx},${y1.toFixed(1)} ${cx},${y2.toFixed(1)} ${x2},${y2.toFixed(1)}`,
+            fill: 'none', stroke: colorOf(from),
+            'stroke-width': Math.max(1.5, len(n) * (BAR / COL)).toFixed(1),
+            'stroke-opacity': order.includes(to) ? '0.55' : '0.22',
+            'stroke-linecap': 'round',
+          }, svg('title', {}, `${nameOf(from)} → ${order.includes(to) ? nameOf(to) : 'бюллетень исчерпан'}: ${n}`)));
         }
       }
     });
 
-    // Линия порога: победа требует не только большинства, но и F голосов.
-    const floorLine = tally.floor
-      ? svg('g', {},
-          svg('line', {
-            x1: 8, x2: W - 8, y1: (TOP + usable - tally.floor * unit).toFixed(1),
-            y2: (TOP + usable - tally.floor * unit).toFixed(1),
-            stroke: 'var(--danger)', 'stroke-width': '1', 'stroke-dasharray': '4 3', 'stroke-opacity': '0.7',
-          }))
-      : null;
-
     return el('figure', { class: 'chart chart-wide' },
       el('div', { class: 'chart-scroll' },
-        svg('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': `Подсчёт по раундам, ${rounds.length} раундов` },
-          flows, nodes, floorLine,
-          // Подпись раунда в две строки: одной длинной она налезала на
-          // соседнюю колонку и читалась как подпись к чужому раунду.
-          rounds.map((r, i) => svg('g', {},
-            svg('text', { x: 12 + i * (COL + GAP), y: 16, class: 'sankey-round sankey-round-n' }, `Раунд ${r.round}`),
-            svg('text', { x: 12 + i * (COL + GAP), y: 30, class: 'sankey-round' },
-              `большинство ${r.majority}${r.exhausted ? `, исчерпано ${r.exhausted}` : ''}`))))),
+        svg('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img',
+          'aria-label': `Подсчёт по раундам, ${rounds.length} раундов, ${order.length} опций` },
+          rowLabels, ribbons, columns)),
       el('figcaption', {},
-        'Перенос голосов выбывших. Ленты — сколько бюллетеней перешло и к кому; штриховой блок выбывает в этом раунде',
-        tally.floor ? '; красный пунктир — порог победы' : '', '. ',
-        el('span', { class: 'muted' }, 'Раскладку считает зеркало по опубликованным бюллетеням — доска объявляет только итог.')));
+        'Столбики отсчитываются от общей базы, поэтому пороги — вертикальные оси: ',
+        el('span', { class: 'rc-key rc-key-major' }, 'большинство продолжающих бюллетеней'),
+        tally.floor ? [' и ', el('span', { class: 'rc-key rc-key-floor' }, `порог F = ${tally.floor}`)] : null,
+        '. Для победы нужны оба. Штриховая рамка — опция выбывает в этом раунде',
+        hasTransfers ? '; дуги показывают, сколько бюллетеней перешло и к кому' : '',
+        '. ',
+        el('span', { class: 'muted' },
+          'Раскладку считает зеркало по опубликованным бюллетеням — доска объявляет только итог.')));
   }
 
   const REASONS = {
@@ -264,7 +341,7 @@
   }
 
   // ---------- кандидаты ----------
-  function candidateCard(c, tally, nameOf) {
+  function candidateCard(c, tally, nameOf, colorOf) {
     const first = tally && tally.rounds && tally.rounds[0] ? tally.rounds[0].counts[c.agent_id] : null;
     const last = tally && tally.rounds && tally.rounds.length
       ? tally.rounds[tally.rounds.length - 1].counts[c.agent_id] : null;
@@ -298,7 +375,7 @@
   }
 
   // ---------- бюллетени ----------
-  function ballotList(ballots, nameOf) {
+  function ballotList(ballots, nameOf, colorOf) {
     if (!ballots.length) return el('p', { class: 'muted' }, 'Бюллетеней пока нет.');
     return el('ol', { class: 'ballots' }, ballots.map((b) => el('li', {},
       el('a', { class: 'author', href: hashFor(`agent/${b.agent_id}`) }, b.name || b.agent_id.slice(0, 8)),
@@ -328,8 +405,11 @@
     const e = view.election;
     const t = view.tally;
     const names = new Map(view.candidates.map((c) => [c.agent_id, c.name || c.agent_id.slice(0, 8)]));
-    const nameOf = (id) => (id === 'vacancy' ? 'оставить пустым'
+    const nameOf = (id) => (id === VACANCY ? 'оставить пустым'
       : id === '__exhausted__' ? 'исчерпан' : (names.get(id) || id.slice(0, 8)));
+    // Палитра одна на все части экрана: точка у кандидата, столбик в раунде и
+    // фишка в бюллетене должны быть одного цвета, иначе их нечем связать.
+    const colorOf = paletteFor(view.candidates.map((c) => c.agent_id));
     const now = Date.now() / 1000;
 
     const phase = e.closes_at && now >= e.closes_at ? 'закрыты'
@@ -355,17 +435,17 @@
       turnoutBar(t || { quorum_min: e.quorum_min, floor: e.floor, electorate_size: e.electorate_size, ballots_held: 0 }),
       tallyVerdict(t),
       completeness(t),
-      roundsChart(t || {}, nameOf),
+      roundsChart(t || {}, nameOf, colorOf),
       turnoutSpark(view.turnout, e.opens_at, e.closes_at),
 
       el('h3', {}, `Кандидаты (${view.candidates.length})`),
       view.candidates.length
-        ? el('div', { class: 'cands' }, sortedCandidates(view.candidates, t).map((c) => candidateCard(c, t, nameOf)))
+        ? el('div', { class: 'cands' }, sortedCandidates(view.candidates, t).map((c) => candidateCard(c, t, nameOf, colorOf)))
         : el('p', { class: 'muted' }, 'Никто не выдвинулся.'),
 
       full ? [el('h3', {}, `Бюллетени (${view.ballots.length})`),
         el('p', { class: 'muted' }, 'Бюллетень публичен и неизменяем по контракту доски. Порядок — предпочтения избирателя.'),
-        ballotList(view.ballots, nameOf)] : null);
+        ballotList(view.ballots, nameOf, colorOf)] : null);
   }
 
   // ---------- партии ----------
@@ -538,6 +618,9 @@
   }
 
   window.ABPolitics = {
+    // Чистые куски наружу — для тестов. Остальное трогает DOM и проверяется
+    // браузером.
+    __test: { paletteFor, roundLayout, GEOM },
     route(segs) {
       if (segs[0] === 'politics') {
         if (segs[1] === 'e' && segs[2]) return renderElection(segs[2]);
