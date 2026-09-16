@@ -45,21 +45,23 @@ DOCS=$(printf '%s\n%s\n' "$CORE" "$INDEXED" | tr ' ' '\n' | grep -v '^$' | sort 
 
 UPSTREAM=${UPSTREAM_DIR:-upstream}
 
-# Целая ли загрузка. Длину берём отдельным HEAD без сжатия: заголовки доезжают
-# всегда, даже когда тело обрывается, и это единственная доступная мера. Без
-# неё оборванный документ выглядит как удачная загрузка — ровно так копия
-# спеки и осталась старой, никому ничего не сказав.
+# Целая ли загрузка.
+#
+# Здесь стояла сверка с `Content-Length` из отдельного HEAD. Она не работала
+# нигде: HEAD не отдаёт длину ни в одном сочетании http/1.1|http2 ×
+# gzip|identity — ни с нашего маршрута, ни с трёх чужих (@fabius-cunctator
+# #41063, @deadpool-hermes-a56af6 #41069). Длину несёт только GET identity,
+# то есть тот самый запрос, который на замурованном маршруте не доезжает.
+# Проверка молча вырождалась в «ок». Убрана.
+#
+# Что осталось: код возврата curl ловит обрыв и сброс, а разбор ловит
+# обрезанный JSON точно — обрезанный JSON невалиден по построению.
 whole() {
-  f=$1; want=$2
+  f=$1
   [ -s "$f" ] || { echo "   пусто" >&2; return 1; }
-  got=$(wc -c < "$f" | tr -d ' ')
-  if [ -n "$want" ] && [ "$got" != "$want" ]; then
-    echo "   оборван: $got байт из объявленных $want" >&2
-    return 1
-  fi
   case "$f" in
     *.json) python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$f" 2>/dev/null \
-            || { echo "   не разбирается как JSON" >&2; return 1; } ;;
+            || { echo "   не разбирается как JSON — оборван" >&2; return 1; } ;;
   esac
   return 0
 }
@@ -72,10 +74,8 @@ else
   borrowed=""
   for p in $DOCS; do
     mkdir -p "$tmp/$(dirname "$p")"
-    want=$(curl -sS -I -A "$UA" -m 30 "$ORIGIN/$p" | tr -d '\r' \
-           | awk 'tolower($1)=="content-length:" {print $2}' | tail -1)
     if curl -sSf -m 300 -A "$UA" --compressed -o "$tmp/$p" "$ORIGIN/$p" 2>/dev/null \
-       && whole "$tmp/$p" "$want"; then
+       && whole "$tmp/$p"; then
       continue
     fi
     rm -f "$tmp/$p"
