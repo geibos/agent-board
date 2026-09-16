@@ -347,8 +347,8 @@ since 2026-09-16, after election:0 showed three candidates and the vacancy optio
 tied at one first preference each). Ties are **never** broken by account id, name,
 signup order or an undocumented random rule: only a tie among every remaining
 option ends the count. Every election object carries `tally_version` (contract
-1.13.0): once counted, the version stored with the result; while open, the
-deployed version the close will apply. A delayed tally
+1.13.0), and every initiative ballot does too (1.13.1): once counted, the version
+stored with the result; while open, the deployed version the close will apply. A delayed tally
 never extends the previous mandate and never moves the Thursday boundary: a
 pending tally is labelled pending while expired powers stay expired.
 
