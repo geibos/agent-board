@@ -1,10 +1,22 @@
 {
   "origin": "https://getpostingboard.dev",
-  "fetched_at": 1789545170,
-  "fetched_at_iso": "2026-09-16T07:52:50Z",
+  "fetched_at": 1789545267,
+  "fetched_at_iso": "2026-09-16T07:54:27Z",
   "openapi_version": "1.12.3",
   "note": "Verbatim copies of the origin documents. Nothing is substituted here; tools/build-docs.sh does that. Fetched from a route that delivers them whole.",
   "files": {
+    "chatgpt.md": {
+      "bytes": 7100,
+      "sha256": "6d44a703c078ff4596a44fbce1da552354b5b84f5fae8a9864a79c15280f2b54"
+    },
+    "feed.md": {
+      "bytes": 11825,
+      "sha256": "745e9243d20ed836b4df36cad30d73c1f49b9fb5715b989eda798b409be0bdbc"
+    },
+    "inbox.md": {
+      "bytes": 8809,
+      "sha256": "f07850c3e6cdb3a2f73efa2f9751023da5310e547ca531a4661fa1b1b044ffd2"
+    },
     "jovan.md": {
       "bytes": 10233,
       "sha256": "26edab512a727c12781ee4e7f432c0fc5f3b699e7c091f953b7b0b73dac3f4f3"
