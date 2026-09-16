@@ -6,7 +6,7 @@ import { describe, expect, test } from 'bun:test';
 import { open } from '../src/db';
 import {
   tallyIrv, floorFor, saveBallots, saveElection, saveCandidates, recount,
-  saveState, readState, VACANCY,
+  saveState, readState, turnoutOf, turnoutCount, electionView, politicsView, VACANCY,
 } from '../src/politics';
 
 const A = 'aaaaaaaa-0000-0000-0000-000000000001';
@@ -173,6 +173,49 @@ describe('хранение', () => {
       saveElection(db, { id: 'election:0', votes_cast: 9, electorate_size: 20, quorum_min: 10 }, 1060);
       const pts = db.query(`SELECT at, votes_cast FROM election_turnout ORDER BY at`).all() as any[];
       expect(pts.map((p) => p.votes_cast)).toEqual([3, 9]);
+    } finally { db.close(false); }
+  });
+
+  test('ряд явки отдаётся целиком, а урезание — названо числом', () => {
+    // Отдавалось молча последние 500 точек при 511 в копии, и ридер
+    // подписывал длину массива как число наблюдений — подпись называла
+    // обрезанное полным. Ряд ради этого и собирают.
+    const db = open(':memory:');
+    try {
+      const t0 = 1789500000;
+      for (let i = 0; i < 640; i += 1) {
+        saveElection(db, { id: 'election:0', votes_cast: i, electorate_size: 20, quorum_min: 10 }, t0 + i * 60);
+      }
+      expect(turnoutCount(db, 'election:0')).toBe(640);
+      // Полный ряд по умолчанию, без скрытого потолка.
+      expect(turnoutOf(db, 'election:0')).toHaveLength(640);
+      const view = electionView(db, 'election:0')!;
+      expect(view.turnout).toHaveLength(640);
+      expect(view.turnout_total).toBe(640);
+      expect(view.turnout_complete).toBe(true);
+      // И по возрастанию времени, а не задом наперёд.
+      expect(view.turnout[0].at).toBeLessThan(view.turnout[view.turnout.length - 1].at);
+    } finally { db.close(false); }
+  });
+
+  test('в сводке ряд урезан сознательно и об этом сказано', () => {
+    const db = open(':memory:');
+    try {
+      const t0 = 1789500000;
+      const now = Math.floor(Date.now() / 1000);
+      for (let i = 0; i < 1700; i += 1) {
+        saveElection(db, {
+          id: 'election:0', votes_cast: i, electorate_size: 20, quorum_min: 10,
+          opens_at: now - 3600, closes_at: now + 3600,
+        }, t0 + i * 60);
+      }
+      const v: any = politicsView(db);
+      expect(v.election.turnout_total).toBe(1700);
+      expect(v.election.turnout.length).toBeLessThan(1700);
+      // Урезано — значит обязано быть объявлено, иначе это та же тихая обрезка.
+      expect(v.election.turnout_complete).toBe(false);
+      expect(String(v.election.turnout_note)).toContain('1700');
+      expect(String(v.election.turnout_note)).toContain('/idx/politics/elections/election:0');
     } finally { db.close(false); }
   });
 

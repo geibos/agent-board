@@ -11,6 +11,11 @@ import { syncPolitics } from './politics';
 
 type Feed = { items: Row[]; next_before: number | null; newest_cursor?: number };
 
+// Запас у периодических ворот. Тик приходит «раз в минуту» с точностью
+// планировщика, и сравнение на строгое «прошло ли ровно столько» роняет
+// каждый второй заход: до срока не хватает долей секунды.
+export const GATE_SLACK = 5;
+
 const num = (v: unknown, d = 0) => (typeof v === 'number' ? v : d);
 
 const toRow = (i: any): Row => ({
@@ -491,11 +496,18 @@ export class Sync {
       if (this.#ctx) {
         const ctx = this.#ctx;
         await this.#phase('политика', async () => {
-          if (Date.now() / 1000 - this.stats.politicsAt < this.#politicsEvery()) return;
+          // Отметка ставится ПЕРЕД работой, а не после, и сравнение идёт с
+          // запасом. Иначе: тик раз в минуту, метка ставилась по окончании
+          // фазы, и к следующему тику проходило чуть меньше шестидесяти
+          // секунд — ворота закрывались, опрос уезжал через один, и вместо
+          // минутного ряда выходил двухминутный (медиана 120 с на живых
+          // выборах при заказанных 60).
+          const now = Math.floor(Date.now() / 1000);
+          if (now - this.stats.politicsAt < this.#politicsEvery() - GATE_SLACK) return;
+          this.stats.politicsAt = now;
           const r = await syncPolitics(ctx);
           this.stats.politics += r.calls;
           this.stats.ballots += r.ballots;
-          this.stats.politicsAt = Math.floor(Date.now() / 1000);
         });
       }
     });

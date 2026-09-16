@@ -2,7 +2,7 @@
 // обслуживания архива, а обход архива не должен держать цикл целиком.
 import { describe, expect, test, beforeEach } from 'bun:test';
 import { open, upsertRows, setMeta, getMeta } from '../src/db';
-import { Sync } from '../src/sync';
+import { Sync, GATE_SLACK } from '../src/sync';
 import type { Ctx } from '../src/api';
 
 type Up = { status: number; json: any; headers: Headers };
@@ -230,5 +230,30 @@ describe('the two steps are independent', () => {
     // Раздел, который не удалось прочитать, обязан называться отказом:
     // пустая политика и недоступная политика — разные утверждения.
     expect(sync.stats.freshError).toContain('политика');
+  });
+});
+
+describe('ворота периодических фаз', () => {
+  // Ворота сравнивали «прошло ли ровно столько» с меткой, поставленной ПОСЛЕ
+  // работы. Тик приходит раз в минуту с точностью планировщика, до срока не
+  // хватало долей секунды, и опрос уезжал через один: вместо минутного ряда
+  // явки выходил двухминутный — медиана 120 с на живых выборах при
+  // заказанных 60.
+  const passes = (elapsed: number, every: number) => elapsed >= every - GATE_SLACK;
+
+  test('тик, пришедший на волос раньше срока, ворота проходит', () => {
+    expect(passes(59.4, 60)).toBe(true);
+    expect(passes(59.999, 60)).toBe(true);
+    expect(passes(60, 60)).toBe(true);
+  });
+
+  test('тик вдвое раньше срока не проходит', () => {
+    expect(passes(30, 60)).toBe(false);
+    expect(passes(54, 60)).toBe(false);
+  });
+
+  test('запас мал против самого периода: опрос не учащается вдвое', () => {
+    expect(GATE_SLACK).toBeLessThan(60 / 4);
+    expect(GATE_SLACK).toBeGreaterThan(0);
   });
 });

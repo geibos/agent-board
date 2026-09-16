@@ -422,9 +422,27 @@ export const ballotsOf = (db: Database, id: string): any[] =>
              FROM election_ballots WHERE ballot_id = ? ORDER BY coalesce(cast_at, seen_at), agent_id`).all(id) as any[])
     .map((b) => ({ ...b, ranking: safeArray(b.ranking) }));
 
-export const turnoutOf = (db: Database, id: string, limit = 500): any[] =>
-  db.query(`SELECT at, votes_cast FROM election_turnout WHERE ballot_id = ?
-            ORDER BY at DESC LIMIT ?`).all(id, limit) as any[];
+export const turnoutCount = (db: Database, id: string): number =>
+  (db.query(`SELECT count(*) AS n FROM election_turnout WHERE ballot_id = ?`).get(id) as { n: number }).n;
+
+/**
+ * Ряд явки. `limit = 0` — весь ряд.
+ *
+ * Обрезка по умолчанию была тихой: при 511 точках в копии наружу уходили
+ * последние 500, а длина массива подписывалась в ридере как «наблюдений»,
+ * то есть подпись называла обрезанное число полным. Ряд ради этого и
+ * собирают — отдавать его короче архива и не говорить об этом нельзя.
+ * Сутки голосования при опросе раз в минуту — это 1440 точек, около 40 КБ;
+ * на адрес одних выборов это отдаётся целиком.
+ */
+export const turnoutOf = (db: Database, id: string, limit = 0): any[] => {
+  const rows = limit > 0
+    ? db.query(`SELECT at, votes_cast FROM election_turnout WHERE ballot_id = ?
+                ORDER BY at DESC LIMIT ?`).all(id, limit) as any[]
+    : db.query(`SELECT at, votes_cast FROM election_turnout WHERE ballot_id = ?
+                ORDER BY at DESC`).all(id) as any[];
+  return rows;
+};
 
 function safeArray(json: string): string[] {
   try { const v = JSON.parse(json); return Array.isArray(v) ? v : []; } catch { return []; }
@@ -476,7 +494,31 @@ export function electionView(db: Database, id: string) {
     ballots: ballotsOf(db, id),
     tally: recount(db, id),
     turnout: turnoutOf(db, id).reverse(),
+    // Сколько точек всего — рядом с самим рядом, чтобы «сколько наблюдений»
+    // читалось из числа, а не из длины возможно урезанного массива.
+    turnout_total: turnoutCount(db, id),
+    turnout_complete: true,
     seen_at: row.seen_at,
+  };
+}
+
+/**
+ * То же, что `electionView`, но ряд явки урезан до последних суток опроса:
+ * сводка открывается на каждом заходе, и тащить в неё весь архив незачем.
+ * Урезание объявлено полями `turnout_total` и `turnout_complete`, а полный
+ * ряд лежит по адресу одних выборов.
+ */
+const DASH_TURNOUT = 1500;
+function dashboardElection(db: Database, id: string) {
+  const view = electionView(db, id);
+  if (!view) return null;
+  const total = view.turnout_total;
+  if (total <= DASH_TURNOUT) return view;
+  return {
+    ...view,
+    turnout: view.turnout.slice(-DASH_TURNOUT),
+    turnout_complete: false,
+    turnout_note: `showing the last ${DASH_TURNOUT} of ${total} points; the whole series is at /idx/politics/elections/${id}`,
   };
 }
 
@@ -500,7 +542,7 @@ export function politicsView(db: Database) {
     seen_at: status?.at ?? null,
     stale_seconds: status ? at - status.at : null,
     status: status?.data ?? null,
-    election: openOrNext ? electionView(db, openOrNext.id) : null,
+    election: openOrNext ? dashboardElection(db, openOrNext.id) : null,
     elections: (db.query(`SELECT id, ordinal, scope, term_id, opens_at, closes_at, status,
                                  effective_status, electorate_size, votes_cast, floor,
                                  outcome, reason, winner_id, candidate_count, seen_at
