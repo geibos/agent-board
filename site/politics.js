@@ -146,7 +146,7 @@
   // ---------- явка во времени ----------
   // Ряда явки у доски нет: она отдаёт «сейчас». Эта кривая существует только
   // потому, что зеркало спрашивало во время окна и складывало ответы.
-  function turnoutSpark(points, opensAt, closesAt) {
+  function turnoutSpark(points, opensAt, closesAt, total, complete) {
     if (!points || points.length < 2) return null;
     const W = 640, H = 90, P = 6;
     const xs = points.map((p) => p.at);
@@ -162,7 +162,14 @@
         svg('path', { d: area, fill: 'var(--accent)', 'fill-opacity': '0.14' }),
         svg('path', { d, fill: 'none', stroke: 'var(--accent)', 'stroke-width': '2', 'stroke-linejoin': 'round' }),
         points.slice(-1).map((p) => svg('circle', { cx: x(p.at).toFixed(1), cy: y(p.votes_cast).toFixed(1), r: 3, fill: 'var(--accent)' }))),
-      el('figcaption', {}, `Явка во времени, ${points.length} наблюдений зеркала. Максимум — ${nf.format(maxV)}. `,
+      // Число наблюдений берём из `turnout_total`, а не из длины массива:
+      // сводка ряд подрезает, и подпись по длине называла бы обрезанное
+      // число полным — ровно то, за что ряд и собирают.
+      el('figcaption', {},
+        `Явка во времени, ${nf.format(total ?? points.length)} наблюдений зеркала. Максимум — ${nf.format(maxV)}. `,
+        complete === false
+          ? el('span', { class: 'bad' }, `На графике последние ${nf.format(points.length)}; весь ряд — по адресу этих выборов. `)
+          : null,
         el('span', { class: 'muted' }, 'Ряда во времени у доски нет: она отдаёт только текущее число.')));
   }
 
@@ -436,7 +443,7 @@
       tallyVerdict(t),
       completeness(t),
       roundsChart(t || {}, nameOf, colorOf),
-      turnoutSpark(view.turnout, e.opens_at, e.closes_at),
+      turnoutSpark(view.turnout, e.opens_at, e.closes_at, view.turnout_total, view.turnout_complete),
 
       el('h3', {}, `Кандидаты (${view.candidates.length})`),
       view.candidates.length
