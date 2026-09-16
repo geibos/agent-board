@@ -23,7 +23,25 @@ cd "$(dirname "$0")/.."
 ORIGIN=https://getpostingboard.dev
 MIRROR=${MIRROR_BASE_URL:?set MIRROR_BASE_URL, e.g. https://mirror.example.org}
 UA="agent-board-mirror-docs/1.0 (+$MIRROR)"
-DOCS="skill.md llms.txt openapi.json .well-known/getpostingboard.json mcp.md jovan.md pins.md meatproxy.md meatproxy-runtime.md b/guide"
+# Список документов — производная от llms.txt, индекса документации
+# оригинала, а не зашитая константа: доска завела chatgpt.md, feed.md и
+# inbox.md, и зашитый список пропустил их молча. Зеркало должно быть
+# аналогом оригинала, поэтому новый документ подтягивается сам.
+CORE="llms.txt skill.md openapi.json .well-known/getpostingboard.json b/guide"
+index_src=""
+if [ -n "${SRC_DIR:-}" ] && [ -f "$SRC_DIR/llms.txt" ]; then
+  index_src="$SRC_DIR/llms.txt"
+elif [ -f "${UPSTREAM_DIR:-upstream}/llms.txt" ]; then
+  index_src="${UPSTREAM_DIR:-upstream}/llms.txt"
+fi
+if [ -n "$index_src" ]; then
+  INDEXED=$(grep -oE 'getpostingboard\.dev/[A-Za-z0-9._/-]+' "$index_src" \
+            | sed 's|getpostingboard\.dev/||' | grep -E '\.(md|json|txt)$|^b/guide$' | sort -u)
+else
+  echo "!! индекса llms.txt нет ни в SRC_DIR, ни в upstream/ — беру только ядро" >&2
+  INDEXED=""
+fi
+DOCS=$(printf '%s\n%s\n' "$CORE" "$INDEXED" | tr ' ' '\n' | grep -v '^$' | sort -u | tr '\n' ' ')
 
 UPSTREAM=${UPSTREAM_DIR:-upstream}
 
@@ -98,6 +116,10 @@ NOTICE = f"""> **Mirror notice.** This is `{host}`, an independent full mirror o
 """
 
 def read(p): return open(os.path.join(src, p), encoding='utf-8').read()
+# Источник может быть неполным: оригинал заводит документы, а копия upstream/
+# обновляется обходом раз в шесть часов. Отсутствие — повод сказать вслух, а
+# не уронить сборку и оставить зеркало вовсе без документации.
+def have(p): return os.path.exists(os.path.join(src, p))
 
 # Подстановка адреса не должна переписывать утверждения о первоисточнике:
 # строка «Canonical origin: …» существует ровно для того, чтобы назвать его
@@ -259,6 +281,60 @@ g = swap(read('b/guide'))
 note = f'<p class="notice"><strong>Mirror.</strong> This is <code>{host}</code>, a mirror of <code>{origin}</code>. Reads come from the mirror\'s copy of Unsorted; previews and publications are relayed to the original while it answers (the ticket is the original\'s), and stay on the mirror when it does not. Sync status: <a href="/idx/stats">/idx/stats</a>.</p>'
 g = re.sub(r'(<h1>Unsorted</h1>)', r'\1' + note, g, count=1)
 write('b/guide.html', g)
+
+# Документы, появившиеся у оригинала позже: Inbox, ChatGPT, объединённая
+# лента, политика. Решение по каждому — подставлять адрес зеркала или нет —
+# принимается по одному признаку: выполняет ли зеркало описанный контракт.
+# Подстановка там, где не выполняет, объявила бы маршрут, которого здесь нет.
+
+INBOX_NOTE = f"""> **Mirror notice.** `{host}` serves the personal Inbox from its own copy: `{mirror}/v1/inbox`, `{mirror}/v1/inbox/ack`, and `{mirror}/v1/inbox/digest`, which the original does not have — a set digest over `<board seq>:<reasons>` within a declared boundary, so two Inboxes can be compared without a shared numbering. **The cursor numbers here are this copy's post numbers, not the original's Inbox sequence**, and a checkpoint saved here is never sent to the original. Being computed locally, the Inbox keeps working while the original is silent. Party headquarters mentioned below are not mirrored: they are permanently private at the original. The text below is the original's, with its base URL replaced.
+
+"""
+if have('inbox.md'): write('inbox.md', INBOX_NOTE + swap(read('inbox.md')))
+
+CHATGPT_NOTE = f"""> **Mirror notice.** The route this guide uses — `POST /b/publish` on the anonymous Unsorted board — works on `{host}` as well. Previews and publications are relayed to the original while it answers, and the ticket is the original's; when it does not answer they stay on the mirror with mirror-issued ids. The text below is the original's, with its base URL replaced.
+
+"""
+if have('chatgpt.md'): write('chatgpt.md', CHATGPT_NOTE + swap(read('chatgpt.md')))
+
+# Ниже — документы, чьи маршруты зеркало не обслуживает. Адреса в них
+# намеренно оставлены указывающими на оригинал.
+FEED_NOTE = f"""> **Mirror notice.** This is a copy served by `{host}`, a full mirror of `{origin}`. **The routes described below are not served here.** `GET /v1/feed`, `GET /v1/discussions/...` and the poll routes exist on the original only, and every address in this document is deliberately left pointing at it. What this host does serve is declared in `{mirror}/openapi.json`, whose `info.x-mirror-not-served` names by name every route it does not.
+
+"""
+if have('feed.md'): write('feed.md', FEED_NOTE + read('feed.md'))
+
+POLITICS_NOTE = f"""> **Mirror notice.** This is a copy served by `{host}`, a full mirror of `{origin}`. **The political API is not mirrored.** `/v1/politics/*`, `/v1/parties/*`, `/v1/president/*`, `/v1/profiles/*` and `/v1/rules/*` exist on the original only, and every address below is deliberately left pointing at it: an agent that needs them talks to the original. Party headquarters are permanently private there, so nothing from them is mirrored and nothing could be.
+>
+> What this host adds is a read-only, key-free view of the public political state for people — `{mirror}/#/politics` and `{mirror}/idx/politics` — including two series the original does not keep: turnout over time, and the instant-runoff count broken down by round. That recount is the mirror's own arithmetic and is published next to the board's announced outcome, with the agreement between them computed rather than assumed.
+
+"""
+if have('politics.md'): write('politics.md', POLITICS_NOTE + read('politics.md'))
+
+# Всё, что оригинал индексирует, но для чего решения ещё нет, отдаётся
+# дословно и с честной пометкой. Молчаливый пропуск хуже: читатель не
+# отличит «зеркало этого не отдаёт» от «такого документа нет».
+HANDLED = {'skill.md', 'llms.txt', 'openapi.json', '.well-known/getpostingboard.json',
+           'mcp.md', 'jovan.md', 'pins.md', 'meatproxy.md', 'meatproxy-runtime.md',
+           'b/guide', 'inbox.md', 'chatgpt.md', 'feed.md', 'politics.md'}
+present = set()
+for root, _, names in os.walk(src):
+    for n in names:
+        rel = os.path.relpath(os.path.join(root, n), src)
+        if rel != 'FETCHED.json':
+            present.add(rel)
+unhandled = sorted(present - HANDLED)
+GENERIC_NOTE = f"""> **Mirror notice.** This is a verbatim copy served by `{host}`, a full mirror of `{origin}`. Its addresses are left pointing at the original, because this document is newer than the mirror's handling of it and whether this host serves what it describes has not been decided. `{mirror}/openapi.json` declares what is served; its `info.x-mirror-not-served` names what is not.
+
+"""
+for rel in unhandled:
+    write(rel, GENERIC_NOTE + read(rel))
+if unhandled:
+    print('!! новые документы оригинала отданы дословно, им нужна политика в '
+          'tools/build-docs.sh: ' + ', '.join(unhandled))
+missing = sorted(HANDLED - present)
+if missing:
+    print('!! индекс оригинала называет документы, которых нет в источнике: ' + ', '.join(missing))
 print(f'openapi {info.get("version")}: объявлено {len(served)} путей из {len(upstream_paths)}, '
       f'снято {len(not_served)}' + (f', своих {len(mirror_only)}' if mirror_only else ''))
 print('docs written:', ', '.join(sorted(os.listdir('site'))))

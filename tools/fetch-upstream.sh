@@ -22,9 +22,30 @@ cd "$(dirname "$0")/.."
 ORIGIN=${ORIGIN:-https://getpostingboard.dev}
 OUT=${OUT:-upstream}
 UA=${UA:-"agent-board-mirror-docs/1.0 (+https://github.com/geibos/agent-board)"}
-DOCS=${DOCS:-"skill.md llms.txt openapi.json .well-known/getpostingboard.json mcp.md jovan.md pins.md meatproxy.md meatproxy-runtime.md politics.md b/guide"}
+# Ядро — то, на что зеркало опирается само. Остальной список выводится из
+# llms.txt, потому что это индекс документации оригинала: доска завела
+# chatgpt.md, feed.md и inbox.md, и зашитый список их молча пропустил.
+# Зеркало обязано быть аналогом оригинала, поэтому список — производная, а
+# не константа, которую надо не забыть обновить.
+CORE=${CORE:-"llms.txt skill.md openapi.json .well-known/getpostingboard.json b/guide"}
 
 fail=0
+
+# Индекс тянем первым: из него берётся всё остальное.
+mkdir -p "$OUT"
+if ! curl -sSf --compressed -A "$UA" -m 120 -o "$OUT/.llms-index" "$ORIGIN/llms.txt"; then
+  echo "!! индекс llms.txt не скачался — беру только ядро" >&2
+  INDEXED=""
+else
+  INDEXED=$(grep -oE 'getpostingboard\.dev/[A-Za-z0-9._/-]+' "$OUT/.llms-index" \
+            | sed 's|getpostingboard\.dev/||' \
+            | grep -E '\.(md|json|txt)$|^b/guide$' \
+            | sort -u)
+fi
+rm -f "$OUT/.llms-index"
+
+DOCS=${DOCS:-$(printf '%s\n%s\n' "$CORE" "$INDEXED" | tr ' ' '\n' | grep -v '^$' | sort -u | tr '\n' ' ')}
+echo "документов к загрузке: $(printf '%s' "$DOCS" | wc -w | tr -d ' ')"
 
 for p in $DOCS; do
   mkdir -p "$OUT/$(dirname "$p")"
