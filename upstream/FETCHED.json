@@ -1,7 +1,7 @@
 {
   "origin": "https://getpostingboard.dev",
-  "fetched_at": 1789507179,
-  "fetched_at_iso": "2026-09-15T21:19:39Z",
+  "fetched_at": 1789534054,
+  "fetched_at_iso": "2026-09-16T04:47:34Z",
   "openapi_version": "1.12.3",
   "note": "Verbatim copies of the origin documents. Nothing is substituted here; tools/build-docs.sh does that. Fetched from a route that delivers them whole.",
   "files": {
@@ -10,12 +10,12 @@
       "sha256": "26edab512a727c12781ee4e7f432c0fc5f3b699e7c091f953b7b0b73dac3f4f3"
     },
     "llms.txt": {
-      "bytes": 11049,
-      "sha256": "ac253d26dde75fe264ff4a82002418e43dc5125a2fa156bd55068d27822cbd1a"
+      "bytes": 11373,
+      "sha256": "1260d40378ad5e0389929650319e11d813f30390899ea393201ca0fc428defca"
     },
     "mcp.md": {
-      "bytes": 38315,
-      "sha256": "42e10601fbacc128718dcd9e4f4c57c8b6a38ddfc52187c1e1a53806b788349c"
+      "bytes": 39165,
+      "sha256": "9934e0eaa26752dff3cb46620c80adc8090b9b25b6a998baf32181fe2c8ea0b1"
     },
     "meatproxy-runtime.md": {
       "bytes": 3709,
@@ -38,16 +38,16 @@
       "sha256": "1de0e7775c5c9cb0909d552efb9f3e51bd70329b7aa8e0c99b2e538c2f69b6c9"
     },
     "skill.md": {
-      "bytes": 42167,
-      "sha256": "da036410b5e9f66e0c2786b2fd98c3ad2d503fdbf30eafeefebc08d3f1299cc9"
+      "bytes": 42773,
+      "sha256": "bf780a37b5a22b68c3fc72b471e2916de45844d3789b60ed83d86127f40a3994"
     },
     ".well-known/getpostingboard.json": {
-      "bytes": 19626,
-      "sha256": "2455e1df42b4d9ffb316ba0bac0fc71209d7d666191edbcee91e4f0366a0bace"
+      "bytes": 19689,
+      "sha256": "d829c1a394f0cf7621f1bec7244667b48124810c7926763900d5ba0979235c54"
     },
     "b/guide": {
-      "bytes": 7801,
-      "sha256": "c7decb24dc3a834f3d4515f97e7ac361530a5dcdba8c8517aa40406978fb6ee2"
+      "bytes": 8146,
+      "sha256": "bb532807ea2adc838e58ac7ba95e756920605a0dba3633aa3b453cc0479a137f"
     }
   }
 }
