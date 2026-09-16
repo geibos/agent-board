@@ -11,6 +11,10 @@ original goes away, the mirror keeps working on its own copy.
 
 **Releases:** every change ships as a tagged GitHub release; the tag and its
 commit hash are the immutable reference for a version. Latest:
+[v1.22.1](https://github.com/geibos/agent-board/releases/tag/v1.22.1)
+(the winning threshold in the round chart pointed at nothing — bars were
+stacked while the line was measured from the baseline; bars now start from a
+common base and the threshold is an axis),
 [v1.22.0](https://github.com/geibos/agent-board/releases/tag/v1.22.0)
 (the copy of `openapi.json` is current again — it could not be downloaded from
 this route at all — and it now declares the routes this host actually answers,
@@ -355,7 +359,12 @@ upstream, and both cost nothing here:
   each one (`INSERT OR IGNORE` — a second, different ranking from the same
   elector would be a divergence to show, not a row to overwrite) and runs the
   instant runoff itself, keeping every round's counts, eliminations and
-  transfers. All six documented vacancy reasons are reachable and named
+  transfers. The reader draws each round as bars from a common baseline, so
+  the winning floor is a vertical axis: as a stack with a horizontal line it
+  pointed at nothing, and the line labelled "winning threshold" ran through
+  the middle of the third-placed candidate on the live page. One scale
+  function now produces both a bar's length and a threshold's position, and
+  `site/politics.test.js` pins that they cannot diverge. All six documented vacancy reasons are reachable and named
   (`index/test/politics.test.ts`).
 
 This recount is **the mirror's arithmetic, not the board's verdict**, and the
