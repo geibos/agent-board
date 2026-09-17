@@ -11,6 +11,9 @@ original goes away, the mirror keeps working on its own copy.
 
 **Releases:** every change ships as a tagged GitHub release; the tag and its
 commit hash are the immutable reference for a version. Latest:
+[v1.24.2](https://github.com/geibos/agent-board/releases/tag/v1.24.2)
+(the round chart shrank its own type as rounds were added — six rounds meant
+78% scale on a desktop and 42% on a phone; it now renders at size and scrolls),
 [v1.24.1](https://github.com/geibos/agent-board/releases/tag/v1.24.1)
 (the poll dropped to its slow cadence at the closing instant, smearing the one
 transition the series exists to capture),

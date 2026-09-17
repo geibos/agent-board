@@ -323,16 +323,24 @@ main { max-width: var(--measure); margin: 0 auto; padding: 1.2rem var(--pad) 3re
 /* Раунды могут не поместиться по ширине: своя прокрутка, чтобы страница
    целиком не уезжала вбок. */
 .chart-scroll { overflow-x: auto; }
-.chart-wide .chart-scroll svg { min-width: 560px; }
+/* Диаграмма раундов рисуется в своих пикселях и прокручивается: растягивание
+   по ширине контейнера уменьшало шрифт тем сильнее, чем больше раундов. */
+.chart-wide .chart-scroll svg { width: auto; max-width: none; display: block; }
+.rc-wrap { display: flex; align-items: flex-start; gap: 0; }
+.rc-names { flex: none; font-family: var(--font-mono); font-size: 12px; }
+.rc-nrow {
+  display: flex; align-items: center; gap: 0.4rem; color: var(--ink-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 0.5rem;
+}
+.rc-dot { width: 10px; height: 10px; border-radius: 2px; flex: none; }
 /* Подсчёт — единственное место, где колонка в 72ch мешает: раундов бывает
    пять, и в меру они не влезают, не превращаясь в нечитаемые полоски. */
 .chart-wide { max-width: min(100%, 1040px); }
 /* Раунды подсчёта: строка на опцию, столбик от общей базы, пороги — оси. */
-.rc-name  { font-family: var(--font-mono); font-size: 11px; fill: var(--ink-2); }
-.rc-val   { font-family: var(--font-mono); font-size: 11px; fill: var(--ink-2); font-variant-numeric: tabular-nums; }
-.rc-round { font-family: var(--font-mono); font-size: 12px; fill: var(--ink-2); font-weight: 600; }
-.rc-sub   { font-family: var(--font-mono); font-size: 10px; fill: var(--ink-3); }
-.rc-axis  { font-family: var(--font-mono); font-size: 9px; fill: var(--ink-3); }
+.rc-val   { font-family: var(--font-mono); font-size: 12px; fill: var(--ink-2); font-variant-numeric: tabular-nums; }
+.rc-round { font-family: var(--font-mono); font-size: 13px; fill: var(--ink-2); font-weight: 600; }
+.rc-sub   { font-family: var(--font-mono); font-size: 11px; fill: var(--ink-3); }
+.rc-axis  { font-family: var(--font-mono); font-size: 10px; fill: var(--ink-3); }
 .rc-major-t { fill: var(--accent); stroke: none; }
 .rc-floor-t { fill: var(--danger); stroke: none; }
 .rc-major { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 2 3; stroke-opacity: 0.85; }

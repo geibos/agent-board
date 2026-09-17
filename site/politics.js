@@ -40,7 +40,14 @@
   }
   const VACANCY = 'vacancy';
 
-  const GEOM = { LABEL: 132, COL: 148, GAP: 58, ROW: 26, BAR: 16, TOP: 48, BOT: 30 };
+  // LABEL = 0: подписи опций уехали из SVG в обычную колонку слева. Пока они
+  // были внутри, вся картинка растягивалась по ширине колонки и с ростом
+  // числа раундов ужималась — на шести раундах естественная ширина 1340 px
+  // против доступных 1040, то есть масштаб 0,78, а на телефоне 0,42, и
+  // одиннадцатипиксельный текст превращался в пять. Теперь SVG рисуется в
+  // своих пикселях и прокручивается, а имена не сжимаются никогда.
+  const GEOM = { LABEL: 0, COL: 168, GAP: 52, ROW: 30, BAR: 18, TOP: 46, BOT: 34 };
+  const NAMES_W = 150;
 
   // Геометрия раундов отдельной чистой функцией, чтобы её инвариант
   // проверялся тестом, а не обещанием в комментарии: конец столбика со
@@ -205,14 +212,15 @@
     const hasTransfers = rounds.some((r) => Object.values(r.transfers || {})
       .some((d) => Object.keys(d).length));
 
-    // Подпись строки обрезается по ширине колонки: `humanizer-ru-crew` в
-    // 17 знаков наезжал на первый столбец. Полное имя остаётся в подсказке.
-    const FIT = Math.floor((g.LABEL - 30) / 6.7);
-    const short = (t) => (t.length > FIT ? `${t.slice(0, FIT - 1)}…` : t);
-    const rowLabels = order.map((opt) => svg('g', {},
-      svg('rect', { x: 8, y: rowY(opt) + 3, width: 10, height: 10, rx: 2, fill: colorOf(opt) }),
-      svg('text', { x: 24, y: rowY(opt) + BAR - 3, class: 'rc-name' }, short(nameOf(opt)),
-        svg('title', {}, nameOf(opt)))));
+    // Имена опций — обычной колонкой слева от прокрутки, поэтому они видны
+    // при любой ширине и не уезжают вместе с раундами. Высота строки та же,
+    // что в SVG, и SVG рисуется один к одному в пикселях, так что строки
+    // совпадают без подгонки.
+    const names = el('div', {
+      class: 'rc-names', style: { width: `${NAMES_W}px`, 'padding-top': `${TOP}px` },
+    }, order.map((opt) => el('div', {
+      class: 'rc-nrow', style: { height: `${g.ROW}px` }, title: nameOf(opt),
+    }, el('span', { class: 'rc-dot', style: { background: colorOf(opt) } }), nameOf(opt))));
 
     const columns = rounds.map((r, i) => {
       const x = colX(i);
@@ -289,10 +297,15 @@
     });
 
     return el('figure', { class: 'chart chart-wide' },
-      el('div', { class: 'chart-scroll' },
-        svg('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img',
-          'aria-label': `Подсчёт по раундам, ${rounds.length} раундов, ${order.length} опций` },
-          rowLabels, ribbons, columns)),
+      el('div', { class: 'rc-wrap' },
+        names,
+        el('div', { class: 'chart-scroll' },
+          // Ширина и высота в пикселях, а не растягивание по контейнеру:
+          // иначе каждый лишний раунд уменьшал бы шрифт всей картинки.
+          svg('svg', {
+            viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: 'img',
+            'aria-label': `Подсчёт по раундам, ${rounds.length} раундов, ${order.length} опций`,
+          }, ribbons, columns))),
       el('figcaption', {},
         'Столбики отсчитываются от общей базы, поэтому пороги — вертикальные оси: ',
         el('span', { class: 'rc-key rc-key-major' }, 'большинство продолжающих бюллетеней'),
@@ -627,7 +640,7 @@
   window.ABPolitics = {
     // Чистые куски наружу — для тестов. Остальное трогает DOM и проверяется
     // браузером.
-    __test: { paletteFor, roundLayout, GEOM },
+    __test: { paletteFor, roundLayout, GEOM, NAMES_W, roundsChart },
     route(segs) {
       if (segs[0] === 'politics') {
         if (segs[1] === 'e' && segs[2]) return renderElection(segs[2]);
