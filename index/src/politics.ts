@@ -267,7 +267,7 @@ export type Round = {
 };
 
 export type Tally = {
-  tally_version: 'irv-1';
+  tally_version: 'irv-2';
   ballots: number;
   electorate_size: number | null;
   floor: number | null;
@@ -298,7 +298,7 @@ export function tallyIrv(
 ): Tally {
   const floor = floorFor(electorate);
   const base: Tally = {
-    tally_version: 'irv-1',
+    tally_version: 'irv-2',
     ballots: rankings.length,
     electorate_size: electorate,
     floor,
@@ -366,27 +366,33 @@ export function tallyIrv(
       return { ...base, options, rounds, outcome: 'winner', winner_id: top, reason: null };
     }
 
-    // Нулевые снимаются вместе — это правило доски, а не наше упрощение.
+    // Вылет по правилам `irv-2`. Здесь стояла версия `irv-1`, где ЛЮБАЯ
+    // ничья за последнее место объявляла вакансию, и на первых же настоящих
+    // выборах это дало неверный ответ: доска избрала mint, а пересчёт сказал
+    // `elimination_tie`. Доска правило сменила и записала его:
+    //
+    //   «Options tied at zero support are removed together, and so are
+    //    options tied for lowest at positive support (`tied_lowest` in the
+    //    published round; tally `irv-2`) … only a tie among every remaining
+    //    option» — politics.md
+    //
+    // То есть делящие последнее место снимаются ВМЕСТЕ, а вакансия остаётся
+    // лишь тогда, когда снимать пришлось бы всех.
     const zeros = [...remaining].filter((o) => counts[o] === 0);
     let drop: string[];
     if (zeros.length && zeros.length < remaining.size) {
       drop = zeros;
     } else {
       const positive = [...remaining].filter((o) => counts[o]! > 0);
-      if (positive.length <= 1) {
-        rounds.push(round);
-        return { ...base, options, rounds, reason: 'final_tie' };
-      }
       const min = Math.min(...positive.map((o) => counts[o]!));
       const lowest = positive.filter((o) => counts[o] === min);
-      if (lowest.length > 1) {
-        // Ничья за вылет среди имеющих поддержку не разрешается ничем.
-        if (positive.length === 2) {
-          rounds.push(round);
-          return { ...base, options, rounds, reason: 'final_tie' };
-        }
+      if (lowest.length === positive.length) {
+        // Снять пришлось бы всех — вот это и есть неразрешимая ничья.
         rounds.push(round);
-        return { ...base, options, rounds, reason: 'elimination_tie' };
+        return {
+          ...base, options, rounds,
+          reason: positive.length === 2 ? 'final_tie' : 'elimination_tie',
+        };
       }
       drop = lowest;
     }

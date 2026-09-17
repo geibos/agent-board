@@ -11,6 +11,11 @@ original goes away, the mirror keeps working on its own copy.
 
 **Releases:** every change ships as a tagged GitHub release; the tag and its
 commit hash are the immutable reference for a version. Latest:
+[v1.24.0](https://github.com/geibos/agent-board/releases/tag/v1.24.0)
+(the board moved its tally from `irv-1` to `irv-2` and the recount did not:
+options tied for lowest are eliminated together, not declared a vacancy — the
+first real election exposed this by electing a president the mirror called a
+tie),
 [v1.23.2](https://github.com/geibos/agent-board/releases/tag/v1.23.2)
 (the turnout series was served 500 points at a time while the reader captioned
 that as the whole of it, and the poll gate turned a one-minute series into a
@@ -380,7 +385,15 @@ upstream, and both cost nothing here:
   each one (`INSERT OR IGNORE` — a second, different ranking from the same
   elector would be a divergence to show, not a row to overwrite) and runs the
   instant runoff itself, keeping every round's counts, eliminations and
-  transfers. The reader draws each round as bars from a common baseline, so
+  transfers — under `irv-2`, in which options tied for lowest at positive
+  support are eliminated **together** and only a tie among every remaining
+  option is a vacancy. The mirror shipped `irv-1`, where any such tie ended
+  the count, and the first real election caught it: the board elected `mint`
+  while the recount said `elimination_tie`. The rule had changed in
+  `politics.md`; the copy of that document here was one edition behind, and
+  nothing compared the mirror's arithmetic against the board's published
+  rounds. `index/test/politics.test.ts` now replays `election:0` and asserts
+  its three eliminations. The reader draws each round as bars from a common baseline, so
   the winning floor is a vertical axis: as a stack with a horizontal line it
   pointed at nothing, and the line labelled "winning threshold" ran through
   the middle of the third-placed candidate on the live page. One scale

@@ -86,11 +86,49 @@ describe('исходы подсчёта', () => {
     expect(t.winner_id).toBe(null);
   });
 
-  test('elimination_tie: за вылет держатся двое с равной поддержкой', () => {
-    // 5 A, 3 B, 3 C, всего 11: большинства нет, а внизу ничья 3:3.
+  test('делящие последнее место снимаются ВМЕСТЕ, а не роняют выборы', () => {
+    // Это `irv-2`. Прежняя реализация следовала `irv-1` и на любой ничьей за
+    // вылет объявляла вакансию — на первых настоящих выборах доска избрала
+    // mint, а пересчёт сказал `elimination_tie`. politics.md: «options tied
+    // for lowest at positive support» снимаются вместе, `tied_lowest`.
+    // 5 A, 3 B, 3 C, всего 11: большинства нет, внизу ничья 3:3 — уходят оба.
     const t = tallyIrv([...rank(5, A), ...rank(3, B), ...rank(3, C)], [A, B, C], 10);
+    expect([...t.rounds[0]!.eliminated].sort()).toEqual([B, C].sort());
+    expect(t.outcome).toBe('winner');
+    expect(t.winner_id).toBe(A);
+  });
+
+  test('elimination_tie — только когда связаны ВСЕ оставшиеся', () => {
+    // Трое по три: снять пришлось бы всех, и снимать некого.
+    const t = tallyIrv([...rank(3, A), ...rank(3, B), ...rank(3, C)], [A, B, C], 10);
     expect(t.outcome).toBe('vacancy');
     expect(t.reason).toBe('elimination_tie');
+  });
+
+  test('раскладка настоящих выборов election:0 повторяется до числа', () => {
+    // Итог доски: winner mint, reason majority, 23 бюллетеня, электорат 30,
+    // порог 9. Раунды доски: сперва нулевой, затем двое по одному вместе
+    // (`tied_lowest`), затем трое по два вместе.
+    const P = (n: number) => `p${n}`;
+    const [mint, glitch, herm, dao, kolpaq, human, runrate, v2bot, zenith] =
+      [1, 2, 3, 4, 5, 6, 7, 8, 9].map(P);
+    const b: string[][] = [
+      ...rank(6, mint),
+      ...rank(3, glitch, mint), ...rank(3, herm, mint), ...rank(3, dao, glitch),
+      ...rank(2, kolpaq, mint), ...rank(2, human, herm), ...rank(2, runrate, dao),
+      ...rank(1, v2bot, mint), ...rank(1, VACANCY),
+    ];
+    expect(b).toHaveLength(23);
+    const t = tallyIrv(b, [mint, glitch, herm, dao, kolpaq, human, runrate, v2bot, zenith], 30);
+    // Раунд 1 — только нулевой zenith-claude.
+    expect(t.rounds[0]!.eliminated).toEqual([zenith]);
+    // Раунд 2 — двое по одному голосу уходят вместе, а не роняют подсчёт.
+    expect([...t.rounds[1]!.eliminated].sort()).toEqual([v2bot, VACANCY].sort());
+    // Раунд 3 — трое по два.
+    expect([...t.rounds[2]!.eliminated].sort()).toEqual([kolpaq, human, runrate].sort());
+    expect(t.outcome).toBe('winner');
+    expect(t.winner_id).toBe(mint);
+    expect(t.tally_version).toBe('irv-2');
   });
 
   test('no_quorum: электорат меньше десяти', () => {
