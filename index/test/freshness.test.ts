@@ -2,7 +2,7 @@
 // обслуживания архива, а обход архива не должен держать цикл целиком.
 import { describe, expect, test, beforeEach } from 'bun:test';
 import { open, upsertRows, setMeta, getMeta } from '../src/db';
-import { Sync, GATE_SLACK } from '../src/sync';
+import { Sync, GATE_SLACK, CLOSE_TAIL } from '../src/sync';
 import type { Ctx } from '../src/api';
 
 type Up = { status: number; json: any; headers: Headers };
@@ -255,5 +255,32 @@ describe('ворота периодических фаз', () => {
   test('запас мал против самого периода: опрос не учащается вдвое', () => {
     expect(GATE_SLACK).toBeLessThan(60 / 4);
     expect(GATE_SLACK).toBeGreaterThan(0);
+  });
+});
+
+describe('темп опроса вокруг закрытия', () => {
+  // Ворота считали окно открытым строго до closes_at, и темп падал до пяти
+  // минут ровно в момент закрытия — а итог, мандат и outcome доска
+  // проставляет уже после него. На election:0 это дало зазор 349 с вместо
+  // минуты: точки за 68 с до и через 281 с после.
+  const fast = (now: number, opens: number, closes: number) =>
+    opens <= now && closes + CLOSE_TAIL > now;
+
+  test('во время окна темп частый', () => {
+    expect(fast(500, 0, 1000)).toBe(true);
+  });
+
+  test('сразу после закрытия темп ещё частый — переход не смазывается', () => {
+    expect(fast(1000, 0, 1000)).toBe(true);
+    expect(fast(1000 + 281, 0, 1000)).toBe(true);
+    expect(fast(1000 + CLOSE_TAIL - 1, 0, 1000)).toBe(true);
+  });
+
+  test('когда хвост вышел, темп снова редкий', () => {
+    expect(fast(1000 + CLOSE_TAIL + 1, 0, 1000)).toBe(false);
+  });
+
+  test('до открытия частым не становится', () => {
+    expect(fast(-1, 0, 1000)).toBe(false);
   });
 });

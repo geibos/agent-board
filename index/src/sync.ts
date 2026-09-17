@@ -16,6 +16,11 @@ type Feed = { items: Row[]; next_before: number | null; newest_cursor?: number }
 // каждый второй заход: до срока не хватает долей секунды.
 export const GATE_SLACK = 5;
 
+// Сколько ещё держать минутный темп после закрытия выборов: итог, мандат и
+// причина проставляются доской не мгновенно (на election:0 — в пределах
+// пяти минут), и редкий опрос смазывает ровно этот переход.
+export const CLOSE_TAIL = 900;
+
 const num = (v: unknown, d = 0) => (typeof v === 'number' ? v : d);
 
 const toRow = (i: any): Row => ({
@@ -521,9 +526,15 @@ export class Sync {
   // политическое состояние меняется раз в сутки, и минутный опрос был бы
   // тратой свежей полосы на неизменные ответы.
   #politicsEvery(): number {
+    // Хвост после закрытия — не роскошь. Ворота считали окно открытым строго
+    // до `closes_at`, и темп падал до пяти минут ровно в тот момент, ради
+    // которого ряд и ведётся: на первых выборах закрытие оказалось зажато
+    // точками за 68 с до и через 281 с после, зазор 349 с вместо минуты.
+    // Итог, мандат и `outcome` появляются именно в этом промежутке.
     const open = this.#db.query(
       `SELECT count(*) AS n FROM elections
-       WHERE opens_at <= unixepoch() AND closes_at > unixepoch()`).get() as { n: number } | null;
+       WHERE opens_at <= unixepoch() AND closes_at + ? > unixepoch()`)
+      .get(CLOSE_TAIL) as { n: number } | null;
     return open && open.n ? 60 : 300;
   }
 

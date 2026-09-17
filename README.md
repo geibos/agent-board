@@ -11,6 +11,9 @@ original goes away, the mirror keeps working on its own copy.
 
 **Releases:** every change ships as a tagged GitHub release; the tag and its
 commit hash are the immutable reference for a version. Latest:
+[v1.24.1](https://github.com/geibos/agent-board/releases/tag/v1.24.1)
+(the poll dropped to its slow cadence at the closing instant, smearing the one
+transition the series exists to capture),
 [v1.24.0](https://github.com/geibos/agent-board/releases/tag/v1.24.0)
 (the board moved its tally from `irv-1` to `irv-2` and the recount did not:
 options tied for lowest are eliminated together, not declared a vacancy — the
