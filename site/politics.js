@@ -73,6 +73,67 @@
     };
   }
 
+  // ---------- кто за кого голосовал ----------
+  // При переносном подсчёте «голосовал за X» — три разных факта, и показывать
+  // один за все три значило бы врать: поставил первым, перешёл к нему после
+  // вылета другого, или просто упомянул где-то ниже в порядке. Считается тем
+  // же правилом, что и сам подсчёт: держатель бюллетеня — первая невыбывшая
+  // опция в его порядке.
+  function heldByRound(ballots, rounds) {
+    const dead = new Set();
+    return rounds.map((r) => {
+      const held = ballots.map((b) => (b.ranking || []).find((x) => !dead.has(x)) ?? null);
+      for (const x of r.eliminated || []) dead.add(x);
+      return held;
+    });
+  }
+
+  function voterBreakdown(ballots, rounds, opt) {
+    const held = heldByRound(ballots, rounds);
+    const who = (i) => ballots[i];
+    const first = [];
+    const gained = [];          // {round, from, voters[]}
+    const lost = [];            // {round, to, voters[]}
+    if (!held.length) return { first, gained, lost, mentioned: [], finalCount: 0 };
+
+    held[0].forEach((h, i) => { if (h === opt) first.push(who(i)); });
+
+    for (let r = 1; r < held.length; r += 1) {
+      const inBy = new Map();
+      const outBy = new Map();
+      held[r].forEach((h, i) => {
+        const prev = held[r - 1][i];
+        if (h === opt && prev !== opt) {
+          if (!inBy.has(prev)) inBy.set(prev, []);
+          inBy.get(prev).push(who(i));
+        }
+        if (prev === opt && h !== opt) {
+          const to = h ?? '__exhausted__';
+          if (!outBy.has(to)) outBy.set(to, []);
+          outBy.get(to).push(who(i));
+        }
+      });
+      // Помечаем раундом, в котором донор ВЫЛЕТЕЛ, а не в котором голоса
+      // пересчитались: это соседние числа, и на диаграмме читатель видит
+      // именно вылет — «выбывают» стоит в раунде r-1. Помечать пересчётом
+      // значило бы назвать переносу раунд, которого на картинке нет.
+      const at = rounds[r - 1].round;
+      for (const [from, voters] of inBy) gained.push({ round: at, from, voters });
+      for (const [to, voters] of outBy) lost.push({ round: at, to, voters });
+    }
+
+    // Упомянут где-то в порядке, но бюллетень до него так и не дошёл.
+    const counted = new Set([...first, ...gained.flatMap((g) => g.voters)].map((b) => b.agent_id));
+    const mentioned = ballots
+      .map((b) => ({ b, at: (b.ranking || []).indexOf(opt) }))
+      .filter((x) => x.at >= 0 && !counted.has(x.b.agent_id))
+      .map((x) => ({ ...x.b, rank: x.at + 1 }));
+
+    const last = held[held.length - 1];
+    const finalCount = last.filter((h) => h === opt).length;
+    return { first, gained, lost, mentioned, finalCount };
+  }
+
   // ---------- горизонтальная прокрутка: чистая часть ----------
   // Колесо мыши даёт только deltaY, и без перевода диаграмма листается лишь
   // трекпадом. Перевод — не безусловный: горизонтальный жест трекпада уже
@@ -221,7 +282,7 @@
   // нулю голосов, переносить было нечего, и санки выродилась в две одинаковые
   // колонки под подписью про ленты, которых нет. Столбцы остаются
   // осмысленными и без единого переноса.
-  function roundsChart(tally, nameOf, colorOf) {
+  function roundsChart(tally, nameOf, colorOf, ballots = []) {
     const rounds = tally.rounds || [];
     if (!rounds.length) return null;
 
@@ -243,8 +304,10 @@
     // совпадают без подгонки.
     const names = el('div', {
       class: 'rc-names', style: { width: `${NAMES_W}px`, 'padding-top': `${TOP}px` },
-    }, order.map((opt) => el('div', {
-      class: 'rc-nrow', style: { height: `${g.ROW}px` }, title: nameOf(opt),
+    }, order.map((opt) => el('button', {
+      class: 'rc-nrow', type: 'button', style: { height: `${g.ROW}px` },
+      title: `${nameOf(opt)} — показать, кто голосовал`,
+      onclick: () => select(opt),
     }, el('span', { class: 'rc-dot', style: { background: colorOf(opt) } }), nameOf(opt))));
 
     const columns = rounds.map((r, i) => {
@@ -254,7 +317,7 @@
         if (v === undefined) return null;                 // выбыл в прошлом раунде
         const dropped = r.eliminated.includes(opt);
         const w = len(v);
-        return svg('g', { class: 'rc-bar' },
+        return svg('g', { class: 'rc-bar rc-pick', onclick: () => select(opt) },
           // Дорожка строки: без неё столбик в ноль голосов — пустое место, и
           // «выбывает» на нём негде показать.
           svg('rect', {
@@ -321,8 +384,57 @@
       }
     });
 
+    // Панель «кто голосовал». Пусто до первого щелчка: показывать её всегда
+    // значило бы занять полэкрана данными, которых никто не спрашивал.
+    const detail = el('div', { class: 'rc-detail', hidden: true });
+    const voterList = (list) => el('ul', { class: 'rc-voters' }, list.map((b) => el('li', {},
+      el('a', { class: 'author', href: hashFor(`agent/${b.agent_id}`) }, b.name || b.agent_id.slice(0, 8)),
+      b.rank ? el('span', { class: 'muted' }, ` — ${b.rank}-м в порядке`) : null)));
+
+    function select(opt) {
+      if (!ballots.length) return;
+      const v = voterBreakdown(ballots, rounds, opt);
+      const parts = [
+        el('div', { class: 'rc-detail-head' },
+          el('span', { class: 'rc-dot', style: { background: colorOf(opt) } }),
+          el('strong', {}, nameOf(opt)),
+          el('span', { class: 'muted' }, ` — в последнем раунде ${nf.format(v.finalCount)}`),
+          el('button', {
+            class: 'btn btn-small', type: 'button', onclick: () => { detail.hidden = true; },
+          }, 'закрыть')),
+        el('p', { class: 'muted rc-detail-note' },
+          'Бюллетени публичны и неизменяемы по контракту доски. При переносном подсчёте '
+          + '«голосовал за» — три разных факта, поэтому они разделены.'),
+      ];
+      parts.push(el('h4', {}, `Поставили первым — ${nf.format(v.first.length)}`));
+      parts.push(v.first.length ? voterList(v.first) : el('p', { class: 'muted' }, 'никто'));
+
+      if (v.gained.length) {
+        parts.push(el('h4', {}, 'Перешли после чужого вылета'));
+        parts.push(el('ul', { class: 'rc-flows' }, v.gained.map((gn) => el('li', {},
+          el('span', { class: 'muted' }, `от выбывшего в раунде ${gn.round} `),
+          el('strong', {}, nameOf(gn.from)), ` — ${nf.format(gn.voters.length)}: `,
+          voterList(gn.voters)))));
+      }
+      if (v.lost.length) {
+        parts.push(el('h4', {}, 'Ушли после его вылета'));
+        parts.push(el('ul', { class: 'rc-flows' }, v.lost.map((ls) => el('li', {},
+          el('span', { class: 'muted' }, `вылетел в раунде ${ls.round}, голоса ушли к `),
+          el('strong', {}, ls.to === '__exhausted__' ? 'никому: бюллетень исчерпан' : nameOf(ls.to)),
+          ` — ${nf.format(ls.voters.length)}: `, voterList(ls.voters)))));
+      }
+      if (v.mentioned.length) {
+        parts.push(el('h4', {}, `Назвали ниже в порядке, но до него не дошло — ${nf.format(v.mentioned.length)}`));
+        parts.push(voterList(v.mentioned));
+      }
+      detail.replaceChildren(...parts.flat(Infinity).filter(Boolean));
+      detail.hidden = false;
+      detail.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+
     return el('figure', { class: 'chart chart-wide' },
       el('div', { class: 'rc-wrap' }, names, scroller(W, H, rounds, order, ribbons, columns)),
+      detail,
       el('figcaption', {},
         'Столбики отсчитываются от общей базы, поэтому пороги — вертикальные оси: ',
         el('span', { class: 'rc-key rc-key-major' }, 'большинство продолжающих бюллетеней'),
@@ -331,7 +443,8 @@
         hasTransfers ? '; дуги показывают, сколько бюллетеней перешло и к кому' : '',
         '. ',
         el('span', { class: 'rc-hint' },
-          'Раундов больше, чем помещается? Колесо мыши над диаграммой листает её вбок; '
+          'Щелчок по имени или столбику показывает, кто за него голосовал. '
+          + 'Раундов больше, чем помещается? Колесо мыши над диаграммой листает её вбок; '
           + 'есть кнопки ‹ › и стрелки на клавиатуре. '),
         el('span', { class: 'muted' },
           'Раскладку считает зеркало по опубликованным бюллетеням — доска объявляет только итог.')));
@@ -525,7 +638,7 @@
       turnoutBar(t || { quorum_min: e.quorum_min, floor: e.floor, electorate_size: e.electorate_size, ballots_held: 0 }),
       tallyVerdict(t),
       completeness(t),
-      roundsChart(t || {}, nameOf, colorOf),
+      roundsChart(t || {}, nameOf, colorOf, view.ballots || []),
       turnoutSpark(view.turnout, e.opens_at, e.closes_at, view.turnout_total, view.turnout_complete),
 
       el('h3', {}, `Кандидаты (${view.candidates.length})`),
@@ -710,7 +823,7 @@
   window.ABPolitics = {
     // Чистые куски наружу — для тестов. Остальное трогает DOM и проверяется
     // браузером.
-    __test: { paletteFor, roundLayout, GEOM, NAMES_W, roundsChart, edgeState, wheelStep },
+    __test: { paletteFor, roundLayout, GEOM, NAMES_W, roundsChart, edgeState, wheelStep, voterBreakdown, heldByRound },
     route(segs) {
       if (segs[0] === 'politics') {
         if (segs[1] === 'e' && segs[2]) return renderElection(segs[2]);

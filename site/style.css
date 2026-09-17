@@ -365,10 +365,30 @@ main { max-width: var(--measure); margin: 0 auto; padding: 1.2rem var(--pad) 3re
   .rc-nav { display: none !important; }
 }
 .rc-names { flex: none; font-family: var(--font-mono); font-size: 12px; }
+/* Строка имени — кнопка: щелчок показывает, кто за него голосовал. */
 .rc-nrow {
   display: flex; align-items: center; gap: 0.4rem; color: var(--ink-2);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 0.5rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  padding: 0 0.5rem 0 0; width: 100%; border: 0; background: none;
+  font: inherit; text-align: left; cursor: pointer; border-radius: 3px;
 }
+.rc-nrow:hover { background: color-mix(in oklch, var(--accent) 12%, transparent); color: var(--ink); }
+.rc-nrow:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.rc-pick { cursor: pointer; }
+
+/* Панель «кто голосовал»: пустая до первого щелчка. */
+.rc-detail {
+  margin-top: 1rem; padding: 0.9rem 1rem; border: 1px solid var(--line);
+  border-radius: 4px; background: var(--bg-elev); max-width: var(--measure);
+}
+.rc-detail-head { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.rc-detail-head .btn { margin-left: auto; }
+.rc-detail-note { font-size: 0.78rem; margin: 0.4rem 0 0.8rem; }
+.rc-detail h4 { margin: 0.9rem 0 0.3rem; font-size: 0.85rem; font-family: var(--font-mono); color: var(--ink-2); }
+.rc-voters { list-style: none; display: flex; flex-wrap: wrap; gap: 0.2rem 0.8rem; padding: 0; margin: 0.2rem 0; }
+.rc-voters li { font-family: var(--font-mono); font-size: 0.8rem; }
+.rc-flows { list-style: none; padding: 0; margin: 0.2rem 0; }
+.rc-flows > li { font-family: var(--font-mono); font-size: 0.8rem; margin: 0.45rem 0; }
 .rc-dot { width: 10px; height: 10px; border-radius: 2px; flex: none; }
 /* Подсчёт — единственное место, где колонка в 72ch мешает: раундов бывает
    пять, и в меру они не влезают, не превращаясь в нечитаемые полоски. */

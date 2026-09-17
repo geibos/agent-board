@@ -78,7 +78,8 @@ const walk = (n, out = []) => { out.push(n); (n.children || []).forEach((c) => w
 const byTag = (root, tag) => walk(root).filter((x) => x.tag === tag);
 const byClass = (root, cls) => walk(root).filter((x) => (x.className || '').split(' ').includes(cls));
 
-const { paletteFor, roundLayout, GEOM, NAMES_W, roundsChart, edgeState, wheelStep } = load();
+const { paletteFor, roundLayout, GEOM, NAMES_W, roundsChart, edgeState, wheelStep,
+        voterBreakdown, heldByRound } = load();
 
 describe('палитра', () => {
   test('девять кандидатов получают девять разных тонов', () => {
@@ -280,5 +281,88 @@ describe('горизонтальная прокрутка удобна мышь�
     assert.ok((sc.handlers.wheel || []).length, 'колесо не подключено');
     assert.ok((sc.handlers.keydown || []).length, 'стрелки не подключены');
     assert.equal(sc.attrs.tabindex, '0', 'без фокуса стрелки недоступны');
+  });
+});
+
+describe('кто за кого голосовал', () => {
+  // Форма настоящих выборов election:0: 23 бюллетеня, шесть раундов, победил
+  // mint. Проверяется, что «голосовал за» разложено на три разных факта, а
+  // не слито в одно число.
+  const B = (n, ...ranking) => Array.from({ length: n }, (_, i) => ({
+    agent_id: `v${ranking[0]}${i}`, name: `v${ranking[0]}${i}`, ranking,
+  }));
+  const ballots = [
+    ...B(6, 'mint'),
+    ...B(3, 'glitch', 'mint'), ...B(3, 'herm', 'mint'), ...B(3, 'dao', 'glitch'),
+    ...B(2, 'kolpaq', 'mint'), ...B(2, 'human', 'herm'), ...B(2, 'runrate', 'dao'),
+    ...B(1, 'v2bot', 'mint'), ...B(1, 'vacancy'),
+  ];
+  const rounds = [
+    { round: 1, eliminated: ['zenith'] },
+    { round: 2, eliminated: ['v2bot', 'vacancy'] },
+    { round: 3, eliminated: ['kolpaq', 'human', 'runrate'] },
+    { round: 4, eliminated: ['herm'] },
+    { round: 5, eliminated: ['dao'] },
+    { round: 6, eliminated: [] },
+  ];
+
+  test('первые предпочтения считаются отдельно от переносов', () => {
+    const v = voterBreakdown(ballots, rounds, 'mint');
+    assert.equal(v.first.length, 6, 'шесть поставили mint первым');
+    const gained = v.gained.reduce((n, g) => n + g.voters.length, 0);
+    assert.equal(v.first.length + gained, v.finalCount,
+      'первые плюс перешедшие должны дать счёт последнего раунда');
+    assert.equal(v.finalCount, 12);
+  });
+
+  test('переносы названы по раунду и по донору', () => {
+    const v = voterBreakdown(ballots, rounds, 'mint');
+    const r2 = v.gained.find((g) => g.round === 2 && g.from === 'v2bot');
+    assert.ok(r2, 'перенос от v2bot во втором раунде не найден');
+    assert.equal(r2.voters.length, 1);
+    const r3 = v.gained.find((g) => g.round === 3 && g.from === 'kolpaq');
+    assert.equal(r3.voters.length, 2);
+  });
+
+  test('уход голосов после вылета разделён по адресатам', () => {
+    // herm вылетает в 4-м раунде. Три его собственных бюллетеня идут к mint
+    // (он у них вторым), а двое пришедших от human имеют порядок
+    // ['human','herm'] — после herm там ничего нет, они исчерпываются.
+    // Свалить всё в одно число значило бы сказать, что пятеро перешли к mint.
+    const v = voterBreakdown(ballots, rounds, 'herm');
+    const out = v.lost.filter((l) => l.round === 4);
+    assert.equal(out.length, 2, 'должно быть два адресата: mint и исчерпание');
+    const toMint = out.find((l) => l.to === 'mint');
+    const gone = out.find((l) => l.to === '__exhausted__');
+    assert.equal(toMint.voters.length, 3);
+    assert.equal(gone.voters.length, 2);
+  });
+
+  test('исчерпанный бюллетень назван исчерпанным, а не отданным кому-то', () => {
+    const v = voterBreakdown(ballots, rounds, 'vacancy');
+    const out = v.lost.find((l) => l.round === 2);
+    assert.ok(out, 'vacancy вылетает во 2-м раунде');
+    assert.equal(out.to, '__exhausted__');
+    assert.equal(out.voters.length, 1);
+  });
+
+  test('упомянутые ниже в порядке не выдаются за проголосовавших', () => {
+    const v = voterBreakdown(ballots, rounds, 'mint');
+    const ids = new Set([...v.first, ...v.gained.flatMap((g) => g.voters)].map((b) => b.agent_id));
+    for (const m of v.mentioned) {
+      assert.ok(!ids.has(m.agent_id), 'один избиратель не может быть и там, и там');
+      assert.ok(m.rank > 1, 'у упомянутого место в порядке ниже первого');
+    }
+  });
+
+  test('держатель бюллетеня считается тем же правилом, что и подсчёт', () => {
+    const held = heldByRound(ballots, rounds);
+    assert.equal(held.length, rounds.length);
+    // В первом раунде держатель — первая опция порядка.
+    assert.equal(held[0][0], 'mint');
+    // После вылета v2bot его бюллетень переходит ко второму предпочтению.
+    const idx = ballots.findIndex((b) => b.ranking[0] === 'v2bot');
+    assert.equal(held[1][idx], 'v2bot', 'во втором раунде он ещё считается за v2bot');
+    assert.equal(held[2][idx], 'mint', 'в третьем — уже за mint');
   });
 });
