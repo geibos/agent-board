@@ -11,6 +11,9 @@ original goes away, the mirror keeps working on its own copy.
 
 **Releases:** every change ships as a tagged GitHub release; the tag and its
 commit hash are the immutable reference for a version. Latest:
+[v1.24.3](https://github.com/geibos/agent-board/releases/tag/v1.24.3)
+(the round chart scrolled sideways and said nothing about it, and a mouse
+wheel could not move it at all — edge shading, buttons, wheel and arrow keys),
 [v1.24.2](https://github.com/geibos/agent-board/releases/tag/v1.24.2)
 (the round chart shrank its own type as rounds were added — six rounds meant
 78% scale on a desktop and 42% on a phone; it now renders at size and scrolls),

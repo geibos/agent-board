@@ -73,6 +73,31 @@
     };
   }
 
+  // ---------- горизонтальная прокрутка: чистая часть ----------
+  // Колесо мыши даёт только deltaY, и без перевода диаграмма листается лишь
+  // трекпадом. Перевод — не безусловный: горизонтальный жест трекпада уже
+  // работает сам, а на краю событие надо отдать странице, иначе она замирает
+  // под курсором.
+  function edgeState(s) {
+    const max = (s.scrollWidth || 0) - (s.clientWidth || 0);
+    const overflowing = max > 1;
+    return {
+      overflowing, max,
+      atStart: !overflowing || (s.scrollLeft || 0) <= 1,
+      atEnd: !overflowing || (s.scrollLeft || 0) >= max - 1,
+    };
+  }
+
+  function wheelStep(s) {
+    const { overflowing, max } = edgeState(s);
+    if (!overflowing) return { dx: 0, consume: false };
+    if (Math.abs(s.deltaX || 0) >= Math.abs(s.deltaY || 0)) return { dx: 0, consume: false };
+    const from = s.scrollLeft || 0;
+    const to = Math.max(0, Math.min(max, from + s.deltaY));
+    if (to === from) return { dx: 0, consume: false };
+    return { dx: to - from, consume: true };
+  }
+
   const nf = new Intl.NumberFormat('ru');
   const utc = new Intl.DateTimeFormat('ru', {
     dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC',
@@ -297,15 +322,7 @@
     });
 
     return el('figure', { class: 'chart chart-wide' },
-      el('div', { class: 'rc-wrap' },
-        names,
-        el('div', { class: 'chart-scroll' },
-          // Ширина и высота в пикселях, а не растягивание по контейнеру:
-          // иначе каждый лишний раунд уменьшал бы шрифт всей картинки.
-          svg('svg', {
-            viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: 'img',
-            'aria-label': `Подсчёт по раундам, ${rounds.length} раундов, ${order.length} опций`,
-          }, ribbons, columns))),
+      el('div', { class: 'rc-wrap' }, names, scroller(W, H, rounds, order, ribbons, columns)),
       el('figcaption', {},
         'Столбики отсчитываются от общей базы, поэтому пороги — вертикальные оси: ',
         el('span', { class: 'rc-key rc-key-major' }, 'большинство продолжающих бюллетеней'),
@@ -313,8 +330,61 @@
         '. Для победы нужны оба. Штриховая рамка — опция выбывает в этом раунде',
         hasTransfers ? '; дуги показывают, сколько бюллетеней перешло и к кому' : '',
         '. ',
+        el('span', { class: 'rc-hint' },
+          'Раундов больше, чем помещается? Колесо мыши над диаграммой листает её вбок; '
+          + 'есть кнопки ‹ › и стрелки на клавиатуре. '),
         el('span', { class: 'muted' },
           'Раскладку считает зеркало по опубликованным бюллетеням — доска объявляет только итог.')));
+  }
+
+  // Прокручиваемая область с тремя способами листать: колесом мыши, кнопками
+  // и стрелками с клавиатуры. Плюс тени по краям — чтобы было видно, что
+  // справа есть ещё; без них прокрутка просто не обнаруживалась.
+  function scroller(W, H, rounds, order, ribbons, columns) {
+    const STEP = GEOM.COL + GEOM.GAP;          // ровно одна колонка раунда
+    const box = el('div', {
+      class: 'chart-scroll', tabindex: '0', role: 'group',
+      'aria-label': 'Раунды подсчёта, прокручивается вбок',
+    }, svg('svg', {
+      viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: 'img',
+      'aria-label': `Подсчёт по раундам, ${rounds.length} раундов, ${order.length} опций`,
+    }, ribbons, columns));
+
+    const left = el('button', {
+      class: 'rc-nav rc-nav-left', type: 'button', 'aria-label': 'Предыдущий раунд',
+      onclick: () => box.scrollBy({ left: -STEP, behavior: 'smooth' }),
+    }, '‹');
+    const right = el('button', {
+      class: 'rc-nav rc-nav-right', type: 'button', 'aria-label': 'Следующий раунд',
+      onclick: () => box.scrollBy({ left: STEP, behavior: 'smooth' }),
+    }, '›');
+    const wrap = el('div', { class: 'rc-scroller' }, box, left, right);
+
+    const sync = () => {
+      const e = edgeState(box);
+      wrap.classList.toggle('is-scrollable', e.overflowing);
+      wrap.classList.toggle('at-start', e.atStart);
+      wrap.classList.toggle('at-end', e.atEnd);
+    };
+    box.addEventListener('scroll', sync, { passive: true });
+    box.addEventListener('wheel', (ev) => {
+      const { dx, consume } = wheelStep({
+        scrollLeft: box.scrollLeft, scrollWidth: box.scrollWidth,
+        clientWidth: box.clientWidth, deltaX: ev.deltaX, deltaY: ev.deltaY,
+      });
+      if (!consume) return;                    // край или жест вбок — странице
+      ev.preventDefault();
+      box.scrollLeft += dx;
+    });
+    box.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight') return;
+      ev.preventDefault();
+      box.scrollBy({ left: ev.key === 'ArrowLeft' ? -STEP : STEP, behavior: 'smooth' });
+    });
+    if (typeof ResizeObserver === 'function') new ResizeObserver(sync).observe(box);
+    // Размеры известны только после вставки в документ.
+    requestAnimationFrame(sync);
+    return wrap;
   }
 
   const REASONS = {
@@ -640,7 +710,7 @@
   window.ABPolitics = {
     // Чистые куски наружу — для тестов. Остальное трогает DOM и проверяется
     // браузером.
-    __test: { paletteFor, roundLayout, GEOM, NAMES_W, roundsChart },
+    __test: { paletteFor, roundLayout, GEOM, NAMES_W, roundsChart, edgeState, wheelStep },
     route(segs) {
       if (segs[0] === 'politics') {
         if (segs[1] === 'e' && segs[2]) return renderElection(segs[2]);

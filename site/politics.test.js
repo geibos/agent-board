@@ -18,7 +18,13 @@ function node(tag) {
   return {
     tag, attrs: {}, styles: {}, className: '', children: [], text: '',
     setAttribute(k, v) { this.attrs[k] = String(v); },
-    addEventListener() {},
+    handlers: {},
+    addEventListener(type, fn) { (this.handlers[type] ||= []).push(fn); },
+    classList: {
+      set: new Set(),
+      toggle(c, on) { if (on) this.set.add(c); else this.set.delete(c); },
+      has(c) { return this.set.has(c); },
+    },
     append(...kids) {
       for (const k of kids.flat(Infinity)) {
         if (k === null || k === undefined || k === false) continue;
@@ -38,7 +44,7 @@ const el = (tag, attrs = {}, ...kids) => {
   for (const [k, v] of Object.entries(attrs)) {
     if (v === null || v === undefined || v === false) continue;
     if (k === 'class') n.className = v;
-    else if (k.startsWith('on')) continue;
+    else if (k.startsWith('on')) n.addEventListener(k.slice(2), v);
     else if (k === 'style' && typeof v === 'object') Object.assign(n.styles, v);
     else n.setAttribute(k, v === true ? '' : v);
   }
@@ -53,6 +59,8 @@ function load() {
     setInterval: () => 0,
     clearInterval: () => {},
     document: { createElementNS: (_ns, tag) => node(tag) },
+    requestAnimationFrame: () => 0,
+    ResizeObserver: undefined,
     window: {
       AB: {
         el, errorNode: () => node('div'), idxApi: async () => ({}),
@@ -70,7 +78,7 @@ const walk = (n, out = []) => { out.push(n); (n.children || []).forEach((c) => w
 const byTag = (root, tag) => walk(root).filter((x) => x.tag === tag);
 const byClass = (root, cls) => walk(root).filter((x) => (x.className || '').split(' ').includes(cls));
 
-const { paletteFor, roundLayout, GEOM, NAMES_W, roundsChart } = load();
+const { paletteFor, roundLayout, GEOM, NAMES_W, roundsChart, edgeState, wheelStep } = load();
 
 describe('палитра', () => {
   test('девять кандидатов получают девять разных тонов', () => {
@@ -206,5 +214,71 @@ describe('раскладка диаграммы не сжимается от ч�
     // Имена не должны остаться внутри прокручиваемой области.
     const [scroll] = byClass(fig, 'chart-scroll');
     assert.equal(byClass(scroll, 'rc-nrow').length, 0);
+  });
+});
+
+describe('горизонтальная прокрутка удобна мышью', () => {
+  const box = (scrollLeft, scrollWidth = 1300, clientWidth = 700) =>
+    ({ scrollLeft, scrollWidth, clientWidth });
+
+  test('вертикальное колесо листает вбок', () => {
+    const r = wheelStep({ ...box(0), deltaX: 0, deltaY: 120 });
+    assert.equal(r.consume, true);
+    assert.equal(r.dx, 120);
+  });
+
+  test('на краю событие отдаётся странице, а не съедается', () => {
+    // Иначе страница замирает под курсором, стоит диаграмме упереться.
+    const atEnd = wheelStep({ ...box(600), deltaX: 0, deltaY: 120 });
+    assert.equal(atEnd.consume, false);
+    const atStart = wheelStep({ ...box(0), deltaX: 0, deltaY: -120 });
+    assert.equal(atStart.consume, false);
+  });
+
+  test('у края шаг обрезается по остатку, а не перелетает', () => {
+    const r = wheelStep({ ...box(550), deltaX: 0, deltaY: 400 });
+    assert.equal(r.consume, true);
+    assert.equal(r.dx, 50);          // 1300 - 700 - 550
+  });
+
+  test('горизонтальный жест трекпада не перехватывается', () => {
+    const r = wheelStep({ ...box(100), deltaX: -80, deltaY: 10 });
+    assert.equal(r.consume, false);
+  });
+
+  test('когда всё помещается, колесо не трогаем вовсе', () => {
+    const r = wheelStep({ scrollLeft: 0, scrollWidth: 600, clientWidth: 700, deltaX: 0, deltaY: 120 });
+    assert.equal(r.consume, false);
+  });
+
+  test('края определяются для теней и кнопок', () => {
+    assert.deepEqual(
+      (({ overflowing, atStart, atEnd }) => ({ overflowing, atStart, atEnd }))(edgeState(box(0))),
+      { overflowing: true, atStart: true, atEnd: false });
+    assert.deepEqual(
+      (({ atStart, atEnd }) => ({ atStart, atEnd }))(edgeState(box(600))),
+      { atStart: false, atEnd: true });
+    const fits = edgeState({ scrollLeft: 0, scrollWidth: 600, clientWidth: 700 });
+    assert.equal(fits.overflowing, false);
+    assert.equal(fits.atStart && fits.atEnd, true);   // кнопок и теней нет
+  });
+
+  test('кнопки и обработчики построены', () => {
+    const opts = Array.from({ length: 6 }, (_, i) => `o${i}`);
+    const counts = Object.fromEntries(opts.map((o, i) => [o, 6 - i]));
+    const rounds = Array.from({ length: 6 }, (_, r) => ({
+      round: r + 1, counts, continuing: 10, exhausted: 0, majority: 6, eliminated: [], transfers: {},
+    }));
+    const fig = roundsChart({ rounds, floor: 5 }, (x) => x, () => 'red');
+    const navs = byClass(fig, 'rc-nav');
+    assert.equal(navs.length, 2, 'должны быть обе кнопки');
+    for (const b of navs) {
+      assert.ok(b.attrs['aria-label'], 'кнопке нужна подпись для чтения с экрана');
+      assert.ok((b.handlers.click || []).length, 'кнопка без обработчика бесполезна');
+    }
+    const [sc] = byClass(fig, 'chart-scroll');
+    assert.ok((sc.handlers.wheel || []).length, 'колесо не подключено');
+    assert.ok((sc.handlers.keydown || []).length, 'стрелки не подключены');
+    assert.equal(sc.attrs.tabindex, '0', 'без фокуса стрелки недоступны');
   });
 });

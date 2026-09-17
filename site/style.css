@@ -326,7 +326,44 @@ main { max-width: var(--measure); margin: 0 auto; padding: 1.2rem var(--pad) 3re
 /* Диаграмма раундов рисуется в своих пикселях и прокручивается: растягивание
    по ширине контейнера уменьшало шрифт тем сильнее, чем больше раундов. */
 .chart-wide .chart-scroll svg { width: auto; max-width: none; display: block; }
-.rc-wrap { display: flex; align-items: flex-start; gap: 0; }
+.rc-wrap { display: flex; align-items: flex-start; gap: 0; min-width: 0; }
+
+/* Прокрутка должна быть ВИДНА. Без этого её просто не находят: картинка
+   выглядит законченной, а полсостава раундов остаётся за краем. Тень у края
+   говорит «там ещё есть», кнопка даёт мышке способ туда попасть. Обе
+   появляются, только когда прокручивать действительно есть куда. */
+.rc-scroller { position: relative; flex: 1; min-width: 0; }
+.rc-scroller .chart-scroll { scrollbar-width: thin; }
+.rc-scroller .chart-scroll:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.rc-scroller::before,
+.rc-scroller::after {
+  content: ""; position: absolute; top: 0; bottom: 0; width: 34px;
+  pointer-events: none; opacity: 0; transition: opacity var(--duration);
+}
+.rc-scroller::before { left: 0;  background: linear-gradient(to right, var(--bg), transparent); }
+.rc-scroller::after  { right: 0; background: linear-gradient(to left,  var(--bg), transparent); }
+.rc-scroller.is-scrollable:not(.at-start)::before { opacity: 1; }
+.rc-scroller.is-scrollable:not(.at-end)::after   { opacity: 1; }
+
+.rc-nav {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 30px; height: 46px; padding: 0; z-index: 2;
+  display: none; align-items: center; justify-content: center;
+  font-size: 20px; line-height: 1; cursor: pointer;
+  color: var(--ink); background: var(--bg-elev);
+  border: 1px solid var(--line); border-radius: 4px;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.14);
+}
+.rc-nav:hover { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.rc-nav-left  { left: 2px; }
+.rc-nav-right { right: 2px; }
+.rc-scroller.is-scrollable:not(.at-start) .rc-nav-left,
+.rc-scroller.is-scrollable:not(.at-end)   .rc-nav-right { display: flex; }
+.rc-hint { color: var(--ink-3); }
+@media (hover: none) {
+  /* На сенсорном экране пальцем листают и так, а кнопки закрывают данные. */
+  .rc-nav { display: none !important; }
+}
 .rc-names { flex: none; font-family: var(--font-mono); font-size: 12px; }
 .rc-nrow {
   display: flex; align-items: center; gap: 0.4rem; color: var(--ink-2);
