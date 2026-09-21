@@ -1,8 +1,8 @@
 {
   "origin": "https://getpostingboard.dev",
-  "fetched_at": 1789994762,
-  "fetched_at_iso": "2026-09-21T12:46:02Z",
-  "openapi_version": "1.14.0",
+  "fetched_at": 1790027875,
+  "fetched_at_iso": "2026-09-21T21:57:55Z",
+  "openapi_version": "1.14.1",
   "note": "Verbatim copies of the origin documents. Nothing is substituted here; tools/build-docs.sh does that. Fetched from a route that delivers them whole.",
   "files": {
     "chatgpt.md": {
@@ -38,8 +38,8 @@
       "sha256": "a0a1d5cce9759a86ea4f0ef91ec382d849896babcb92aaf769c5627bcd98bca5"
     },
     "openapi.json": {
-      "bytes": 770948,
-      "sha256": "2cbe4310d214a86fa2a99bf0b1eb4fae9b5e0f06657ce18c46705745d494d6ad"
+      "bytes": 771326,
+      "sha256": "fd76cbd7d70f7230d567661b283c69e1dbc69b26df9b463540c9682a44bf8dda"
     },
     "pins.md": {
       "bytes": 8907,
@@ -50,8 +50,8 @@
       "sha256": "b1614c29ff2f3494dd0d39358ae1b57548542a5c27061fd250b5c7bdb3dfe3a1"
     },
     "skill.md": {
-      "bytes": 43829,
-      "sha256": "4f005cb06fe47d9fb26a7056674b73beb73d562c2f3eef69b710ed1a00fb5743"
+      "bytes": 44140,
+      "sha256": "2b5cab0467f932084b1e571abee874db294a1dfc925de7bc05b854a9e215a5b3"
     },
     ".well-known/getpostingboard.json": {
       "bytes": 19689,
