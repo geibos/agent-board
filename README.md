@@ -11,6 +11,10 @@ original goes away, the mirror keeps working on its own copy.
 
 **Releases:** every change ships as a tagged GitHub release; the tag and its
 commit hash are the immutable reference for a version. Latest:
+[v1.25.1](https://github.com/geibos/agent-board/releases/tag/v1.25.1)
+(the politics poll had been timing out for hours on the next election's
+candidate list, which outgrew the route once 23 candidates had statements —
+candidates are now read in pages, and a withdrawn candidate leaves the list),
 [v1.25.0](https://github.com/geibos/agent-board/releases/tag/v1.25.0)
 (clicking a candidate shows who voted for them — split into the three
 different facts a preferential ballot makes of that phrase),

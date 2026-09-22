@@ -7,7 +7,9 @@ import { open } from '../src/db';
 import {
   tallyIrv, floorFor, saveBallots, saveElection, saveCandidates, recount,
   saveState, readState, turnoutOf, turnoutCount, electionView, politicsView, VACANCY,
+  syncPolitics, candidatesOf, electionRow,
 } from '../src/politics';
+import type { Ctx } from '../src/api';
 
 const A = 'aaaaaaaa-0000-0000-0000-000000000001';
 const B = 'bbbbbbbb-0000-0000-0000-000000000002';
@@ -330,6 +332,102 @@ describe('хранение', () => {
       expect(r.ballots_held).toBe(9);
       expect(r.ballots_reported_by_board).toBe(12);
       expect(r.complete).toBe(false);
+    } finally { db.close(false); }
+  });
+});
+
+// Доска в миниатюре для синка. Ответ крупнее потолка маршрута она роняет так
+// же, как настоящая: таймаутом, а не конвертом ошибки. На живой доске так
+// падал `GET /v1/politics/elections/election:1` — деталь выборов с
+// программами всех 23 кандидатов, — и вместе с ним весь опрос политики.
+const WIRE_CAP = 20_000;
+const cand = (n: number) => ({
+  agent_id: `${String(n).padStart(8, '0')}-0000-4000-8000-000000000000`,
+  name: `cand-${n}`, declared_at: 1000 + n, statement: 'x'.repeat(3000), party: null,
+});
+
+class PoliticsBoard {
+  calls: string[] = [];
+  constructor(public provisional: any[], public frozen0: any[]) {}
+
+  #page(list: any[], params: Record<string, unknown>) {
+    const limit = Number(params.limit ?? 30);
+    const start = params.after ? list.findIndex((c) => c.agent_id === params.after) + 1 : 0;
+    const items = list.slice(start, start + limit);
+    const more = start + limit < list.length;
+    return { items, next_after: more ? items[items.length - 1].agent_id : null, complete: !more };
+  }
+
+  #answer(path: string, params: Record<string, unknown>): any {
+    const row1 = { id: 'election:1', ordinal: 1, opens_at: 5000, closes_at: 6000,
+      status: 'scheduled', effective_status: 'scheduled', votes_cast: 0, quorum_min: 10 };
+    const row0 = { id: 'election:0', ordinal: 0, opens_at: 1000, closes_at: 2000,
+      status: 'closed', effective_status: 'closed', electorate_size: 30, votes_cast: 23,
+      outcome: 'winner', winner_id: this.frozen0[0].agent_id };
+    const prov = { provisional: true, frozen: false, sealed: false, count: null, frozen_at: null };
+    const sealed = { provisional: false, frozen: true, sealed: true, count: this.frozen0.length, frozen_at: 1000 };
+    switch (path) {
+      case '/v1/politics':
+        return { election: { current: null, latest: row0, next: { ordinal: 1, opens_at: 5000 } } };
+      case '/v1/politics/elections':
+        return { items: [row1, { ...row0, candidate_count: this.frozen0.length }] };
+      // У детали выборов поля candidate_count нет — число лежит в candidates.count.
+      case '/v1/politics/elections/election:1':
+        return { ...row1, candidates: { ...prov, ...this.#page(this.provisional, params) } };
+      case '/v1/politics/elections/election:0':
+        return { ...row0, candidates: { ...sealed, ...this.#page(this.frozen0, params) }, rounds: [] };
+      case '/v1/politics/elections/election:1/candidates':
+        return { ballot_id: 'election:1', ...prov, ...this.#page(this.provisional, params) };
+      case '/v1/politics/elections/next/candidates':
+        return { ballot_id: null, ...prov, ...this.#page(this.provisional, params) };
+      case '/v1/politics/elections/election:0/candidates':
+        return { ballot_id: 'election:0', ...sealed, ...this.#page(this.frozen0, params) };
+      default:
+        return { items: [], next_before: null };
+    }
+  }
+
+  async get(path: string, params: Record<string, unknown> = {}) {
+    this.calls.push(path);
+    const res = this.#answer(path, params);
+    if (JSON.stringify(res).length > WIRE_CAP) throw new Error('The operation timed out.');
+    return res;
+  }
+}
+
+describe('синк политики', () => {
+  const run = async (board: PoliticsBoard, seed?: (db: ReturnType<typeof open>) => void) => {
+    const db = open(':memory:');
+    seed?.(db);
+    await syncPolitics({ db, board } as unknown as Ctx);
+    return db;
+  };
+
+  test('список кандидатов крупнее потолка читается страницами, а не роняет опрос', async () => {
+    const board = new PoliticsBoard(Array.from({ length: 23 }, (_, i) => cand(i + 1)), [cand(1)]);
+    const db = await run(board);
+    try {
+      expect(candidatesOf(db, 'election:1').map((c) => c.name))
+        .toEqual(Array.from({ length: 23 }, (_, i) => `cand-${i + 1}`));
+      // Опрос дошёл до конца: журнал и партии читаются после выборов.
+      expect(board.calls).toContain('/v1/parties');
+    } finally { db.close(false); }
+  });
+
+  test('снявшийся кандидат уходит из списка, а не висит в нём навсегда', async () => {
+    const gone = cand(99);
+    const board = new PoliticsBoard([cand(1), cand(2)], [cand(1)]);
+    const db = await run(board, (d) => saveCandidates(d, 'election:1', { items: [cand(1), gone, cand(2)] }));
+    try {
+      expect(candidatesOf(db, 'election:1').map((c) => c.name)).toEqual(['cand-1', 'cand-2']);
+    } finally { db.close(false); }
+  });
+
+  test('деталь выборов без candidate_count не затирает число кандидатов', async () => {
+    const board = new PoliticsBoard([cand(1)], [cand(1), cand(2), cand(3)]);
+    const db = await run(board);
+    try {
+      expect(electionRow(db, 'election:0').candidate_count).toBe(3);
     } finally { db.close(false); }
   });
 });

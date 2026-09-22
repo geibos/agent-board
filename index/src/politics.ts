@@ -141,7 +141,10 @@ export function saveElection(db: Database, e: any, at = nowSec()) {
   `).run(e.id, num(e.ordinal), e.scope ?? null, num(e.term_id), num(e.opens_at), num(e.closes_at),
     e.status ?? null, e.effective_status ?? null, e.snapshot_status ?? null,
     num(e.electorate_size), num(e.votes_cast), num(e.floor), num(e.quorum_min),
-    e.outcome ?? null, e.reason ?? null, e.winner_id ?? null, num(e.candidate_count),
+    // У строки списка число лежит в `candidate_count`, у детали выборов — только
+    // в `candidates.count`; без запасного деталь затирала бы его пустым.
+    e.outcome ?? null, e.reason ?? null, e.winner_id ?? null,
+    num(e.candidate_count ?? (e.candidates && e.candidates.count)),
     (e.candidates && e.candidates.frozen) || e.frozen ? 1 : 0,
     num(e.frozen_at ?? (e.candidates && e.candidates.frozen_at)),
     at, JSON.stringify(e));
@@ -171,6 +174,14 @@ export function saveCandidates(db: Database, ballotId: string, list: any, at = n
       stmt.run(ballotId, c.agent_id, c.name ?? null, num(c.declared_at),
         typeof c.statement === 'string' ? c.statement : null,
         c.party ? JSON.stringify(c.party) : null, frozen, at);
+    }
+    // Список, прочитанный до конца, — это весь список. Кто в него больше не
+    // входит (снял кандидатуру, не попал в замороженный снимок), уходит и
+    // отсюда; иначе на экране выборов он висит навсегда и участвует в пересчёте.
+    if (list?.complete === true) {
+      const keep = items.filter((c) => c && typeof c.agent_id === 'string').map((c) => c.agent_id);
+      db.query(`DELETE FROM election_candidates WHERE ballot_id = ?
+                AND agent_id NOT IN (SELECT value FROM json_each(?))`).run(ballotId, JSON.stringify(keep));
     }
   })();
 }
@@ -608,20 +619,27 @@ export async function syncPolitics(ctx: Ctx): Promise<Snapshot> {
   for (const id of interesting) {
     const safe = safeBallotId(id);
     if (!safe) continue;
-    const full: any = await pull(`/v1/politics/elections/${safe}`);
+    // Деталь встраивает первую страницу кандидатов с программами, и без
+    // `limit` она выросла за потолок маршрута: на 23 кандидатах запрос
+    // `election:1` уходил в таймаут и ронял весь опрос политики. Кандидатов
+    // берём отдельным постраничным чтением, а из детали — только метаданные.
+    const full: any = await pull(`/v1/politics/elections/${safe}`, { limit: 1 });
     saveElection(db, full, at);
-    if (full?.candidates) saveCandidates(db, id, full.candidates, at);
+    const cb = full?.candidates;
+    const settled = cb?.frozen && typeof cb.count === 'number' && heldFrozen(db, id) === cb.count;
+    if (!settled) saveCandidates(db, id, await pullCandidates(pull, safe), at);
     out.ballots += await pullBallots(db, pull, id);
   }
 
   // Предварительный список кандидатов ближайших выборов: он существует и
   // тогда, когда самих выборов ещё нет в списке.
-  const next: any = await pull('/v1/politics/elections/next/candidates');
-  saveState(db, 'next_candidates', next, at);
-  if (next?.ballot_id) saveCandidates(db, next.ballot_id, next, at);
-  else {
-    const nextId = status?.election?.next?.ordinal;
-    if (typeof nextId === 'number') saveCandidates(db, `election:${nextId}`, next, at);
+  const nextOrdinal = status?.election?.next?.ordinal;
+  const nextId = typeof nextOrdinal === 'number' ? `election:${nextOrdinal}` : null;
+  if (!nextId || !interesting.has(nextId)) {
+    const next: any = await pullCandidates(pull, 'next');
+    saveState(db, 'next_candidates', next, at);
+    const target = next?.ballot_id || nextId;
+    if (target) saveCandidates(db, target, next, at);
   }
 
   for (const [k, path] of [
@@ -655,6 +673,35 @@ export async function syncPolitics(ctx: Ctx): Promise<Snapshot> {
 
   return out;
 }
+
+// Страница — пять кандидатов. Замер 22.09: 20 на странице (61 КБ) ещё
+// проходили, все 23 одной страницей (~73 КБ) — уже нет; пять — около 6 КБ в
+// gzip, втрое ниже потолка маршрута (~20 КБ) даже при программах по 4 000 символов.
+const CANDIDATE_PAGE = 5;
+
+/** Список кандидатов целиком, страницами; `complete` — дочитан ли до конца. */
+async function pullCandidates(
+  pull: <T>(p: string, q?: Record<string, unknown>) => Promise<T>,
+  id: string,
+): Promise<any> {
+  const items: any[] = [];
+  let head: any = null;
+  let after: string | undefined;
+  for (let page = 0; page < 40; page += 1) {
+    const res: any = await pull(`/v1/politics/elections/${id}/candidates`,
+      after === undefined ? { limit: CANDIDATE_PAGE } : { limit: CANDIDATE_PAGE, after });
+    head ??= res;
+    const got: any[] = Array.isArray(res?.items) ? res.items : [];
+    items.push(...got);
+    if (!res?.next_after || !got.length) return { ...head, items, next_after: null, complete: !res?.next_after };
+    after = res.next_after;
+  }
+  return { ...head, items, complete: false };
+}
+
+const heldFrozen = (db: Database, id: string): number =>
+  (db.query(`SELECT count(*) AS n FROM election_candidates WHERE ballot_id = ? AND frozen = 1`)
+    .get(id) as { n: number }).n;
 
 async function pullBallots(
   db: Database,
