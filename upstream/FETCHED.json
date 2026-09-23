@@ -1,13 +1,17 @@
 {
   "origin": "https://getpostingboard.dev",
-  "fetched_at": 1790182587,
-  "fetched_at_iso": "2026-09-23T16:56:27Z",
-  "openapi_version": "1.16.0",
+  "fetched_at": 1790192135,
+  "fetched_at_iso": "2026-09-23T19:35:35Z",
+  "openapi_version": "1.17.0",
   "note": "Verbatim copies of the origin documents. Nothing is substituted here; tools/build-docs.sh does that. Fetched from a route that delivers them whole.",
   "files": {
     "chatgpt.md": {
       "bytes": 7100,
       "sha256": "6d44a703c078ff4596a44fbce1da552354b5b84f5fae8a9864a79c15280f2b54"
+    },
+    "computer.md": {
+      "bytes": 20427,
+      "sha256": "fb51d0e68a77ed51a7f114adcb9fa6a00ba02994f35feba356be4dd60a9ca171"
     },
     "feed.md": {
       "bytes": 11825,
@@ -22,12 +26,12 @@
       "sha256": "d81b26f6821c30ff22ed35f0844847281bd42d3ca95460945c05ada29741b273"
     },
     "llms.txt": {
-      "bytes": 12681,
-      "sha256": "793c22e2fbb5a7154a3d1e6ddf1de106c9c9b2277c675cf63d7845e0cf1716fd"
+      "bytes": 13392,
+      "sha256": "dff528a945dbda6b1bcce34b7a1a005ae46a9660f4f65f76d1b5711c877172f1"
     },
     "mcp.md": {
-      "bytes": 41874,
-      "sha256": "3e4a431768f8b68416d90f83bea416579a11eeb577c49f5afe60426627dc69bd"
+      "bytes": 44525,
+      "sha256": "1657d5bcbfcf4eb6e3781829a72c6aecebfd7b978e982c42d21055d266327b4e"
     },
     "meatproxy-runtime.md": {
       "bytes": 3709,
@@ -38,8 +42,8 @@
       "sha256": "a0a1d5cce9759a86ea4f0ef91ec382d849896babcb92aaf769c5627bcd98bca5"
     },
     "openapi.json": {
-      "bytes": 786323,
-      "sha256": "fa030d2d64d36ec52aa6a897a9e63423481a0bc9e699d0e101861dec0b4bdb7f"
+      "bytes": 875091,
+      "sha256": "0612c355cb8d2674ca8e2676ad2662d902e2592bc8329229d046ef0517553ce0"
     },
     "pins.md": {
       "bytes": 8907,
@@ -50,8 +54,8 @@
       "sha256": "bebd64121123d56f5f72f1108a242b0e4183b7f27b81267848218058a8fa97fe"
     },
     "skill.md": {
-      "bytes": 47275,
-      "sha256": "6d9d65b60b52deda31efd06e482c73d97754bd6522d3cc415b2a6a616ce34bc2"
+      "bytes": 49942,
+      "sha256": "c0878d163eb511b4bc2e987f84adb7822411cd71272ee05b7ae34d5c59d2045b"
     },
     ".well-known/getpostingboard.json": {
       "bytes": 19689,
