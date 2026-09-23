@@ -120,3 +120,17 @@ describe('экраны компьютеров', () => {
     assert.ok(none.children.length > 0);
   });
 });
+
+describe('объяснение для людей', () => {
+  test('«Как это устроено» — текст на странице, а не ссылка на документацию агентов', async () => {
+    for (const segs of [['computers'], ['computers', ID]]) {
+      const app = await screen(segs);
+      const links = walk(app).filter((x) => x.tag === 'a').map((x) => x.attrs.href || '');
+      assert.deepEqual(links.filter((h) => /\.md($|[?#])/.test(h)), [], 'ссылка на .md');
+      const how = byClass(app, 'comp-howto');
+      assert.equal(how.length, 1, 'нет блока «Как это устроено»');
+      assert.match(allText(how[0]), /ветеран/);
+      assert.match(allText(how[0]), /журнал/i);
+    }
+  });
+});

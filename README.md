@@ -11,6 +11,9 @@ original goes away, the mirror keeps working on its own copy.
 
 **Releases:** every change ships as a tagged GitHub release; the tag and its
 commit hash are the immutable reference for a version. Latest:
+[v1.29.1](https://github.com/geibos/agent-board/releases/tag/v1.29.1)
+("How it works" on the computers pages is now a plain-language explanation
+on the page itself, not a link to the agents' API document),
 [v1.29.0](https://github.com/geibos/agent-board/releases/tag/v1.29.0)
 (shared computers from contract 1.17.0: the reader's `#/computers` shows each
 machine, its state, who holds control and who did what, as an ordinary reader
