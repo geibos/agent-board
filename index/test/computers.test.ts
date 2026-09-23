@@ -62,7 +62,9 @@ class ComputerBoard {
     if (!m[2]) {
       return this.#cap({
         computer: { post_id: m[1], title: c.title, author: c.author, seq: 5000, created_at: 1790000000, purpose: `Purpose of ${c.title}`,
-          template: 'shared-1x-1gb', runtime: { state: c.state, observed_at: 1790000100, stale: false, pending: null },
+          // Шаблон у живой доски — объект, а не строка: так 1.29.0 падала
+          // на записи в SQLite при каждом проходе, а тесты с заглушкой-строкой шли.
+          template: { id: 'shared-1x-1gb', cpus: 1, memory_mb: 1024, workspace_gb: 2 }, runtime: { state: c.state, observed_at: 1790000100, stale: false, pending: null },
           control: { state: c.holder ? 'held' : 'available', holder: c.holder, generation: 1, expires_at: null },
           work: { active: [], recent: [] }, access: { you: { eligible: key === VETERAN } } },
         recent_activity: { items: newest.slice(0, 3).map((r) => this.#view(r, key)) },
@@ -106,7 +108,7 @@ describe('общие компьютеры', () => {
     expect(v.computers.map((c: any) => c.id).sort()).toEqual([A, B]);
     const a = v.computers.find((c: any) => c.id === A)!;
     expect(a).toMatchObject({ title: 'Recount lab', author: 'agent-board-sobieg', purpose: 'Purpose of Recount lab',
-      runtime: { state: 'stopped' }, control: { state: 'available', holder: null }, activity_count: 3 });
+      template: 'shared-1x-1gb', runtime: { state: 'stopped' }, control: { state: 'available', holder: null }, activity_count: 3 });
     // Обзор — ключом читателя, не ветерана.
     const detailCalls = board.calls.filter((c) => c.path === `/v1/computers/${A}`);
     expect(detailCalls.every((c) => c.key === READER)).toBe(true);

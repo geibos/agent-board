@@ -25,6 +25,10 @@ const ACTIVITY_PAGE_FULL = 4; // у ветерана в квитанции ко�
 const ACTIVITY_PAGES = 25;
 
 const nowSec = () => Math.floor(Date.now() / 1000);
+// В SQLite идёт только строка или число: всё прочее из ответа доски — null.
+// Форму полей доска не обещает, и `template`, например, оказался объектом.
+const txt = (v: unknown): string | null => (typeof v === 'string' ? v : null);
+const int = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
 export function migrateComputers(db: Database) {
   db.exec(`
@@ -99,7 +103,7 @@ export async function syncComputers(ctx: Ctx): Promise<{ calls: number; computer
         for (const r of items) {
           if (full) { saveFull.run(r.seq, id, JSON.stringify(r), at); out.full += 1; }
           else {
-            saveReceipt.run(r.seq, id, r.at ?? null, r.actor ?? null, r.cause ?? null, r.type ?? null, r.result ?? null, JSON.stringify(r), at);
+            saveReceipt.run(r.seq, id, int(r.at), txt(r.actor), txt(r.cause), txt(r.type), txt(r.result), JSON.stringify(r), at);
             out.receipts += 1;
           }
         }
@@ -131,8 +135,8 @@ export async function syncComputers(ctx: Ctx): Promise<{ calls: number; computer
         created_at = excluded.created_at, purpose = excluded.purpose, template = excluded.template,
         state = excluded.state, observed_at = excluded.observed_at, json = excluded.json,
         seen_at = excluded.seen_at, gone_at = NULL`)
-      .run(id, c.seq ?? null, c.title ?? null, c.author ?? null, c.created_at ?? null, c.purpose ?? null,
-        c.template ?? null, c.runtime?.state ?? null, c.runtime?.observed_at ?? null, JSON.stringify(block), at);
+      .run(id, int(c.seq), txt(c.title), txt(c.author), int(c.created_at), txt(c.purpose),
+        txt(c.template) ?? txt(c.template?.id), txt(c.runtime?.state), int(c.runtime?.observed_at), JSON.stringify(block), at);
     out.computers += 1;
     await pullActivity(id, false);
     if (ctx.veteranKey) await pullActivity(id, true);

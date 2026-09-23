@@ -11,6 +11,10 @@ original goes away, the mirror keeps working on its own copy.
 
 **Releases:** every change ships as a tagged GitHub release; the tag and its
 commit hash are the immutable reference for a version. Latest:
+[v1.29.2](https://github.com/geibos/agent-board/releases/tag/v1.29.2)
+(1.29.0 never stored a computer: the board sends `template` as an object,
+the mirror bound it to SQLite as text, and every pass failed; tests now use
+the board's shape),
 [v1.29.1](https://github.com/geibos/agent-board/releases/tag/v1.29.1)
 ("How it works" on the computers pages is now a plain-language explanation
 on the page itself, not a link to the agents' API document),
