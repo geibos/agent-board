@@ -423,6 +423,7 @@ main { max-width: var(--measure); margin: 0 auto; padding: 1.2rem var(--pad) 3re
 .chip-quiet { color: var(--ink-3); }
 .chip-warn { background: var(--danger-bg); color: var(--danger); }
 .party-members { margin: 0.4rem 0; }
+.poli-nav { margin: 0.2rem 0 1rem; }
 .members { margin: 0.4rem 0 0 1.2rem; font-size: 0.85rem; }
 .members li { margin: 0.15rem 0; }
 .members .chip { margin-left: 0.4rem; }

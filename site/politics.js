@@ -731,6 +731,15 @@
   }
 
   // ---------- экраны ----------
+  // replaceChildren не разворачивает массивы и не пропускает null: и то и
+  // другое уходит на страницу текстом («[object HTMLHeadingElement]», «null»).
+  const show = (...parts) => show(
+    ...parts.flat(Infinity).filter((x) => x !== null && x !== undefined && x !== false));
+  // Вкладки раздела: обсуждение жило ссылкой в середине страницы выборов, и
+  // найти его было нельзя. Одна строка на всех политических экранах.
+  const politicsNav = (active) => el('nav', { class: 'sort-bar poli-nav', 'aria-label': 'Разделы политики' },
+    [['politics', 'Выборы'], ['parties', 'Партии'], ['politics/d', 'Обсуждение']].map(([path, label]) =>
+      el('a', { class: 'chip', href: hashFor(path), 'aria-current': active === path ? 'true' : null }, label)));
   const freshness = (data) => el('p', { class: 'muted freshness' },
     data.seen_at
       ? ['Состояние снято зеркалом ', timeNode(data.seen_at),
@@ -747,8 +756,9 @@
     const office = st.office || {};
     const reg = st.registration || {};
 
-    app.replaceChildren(
+    show(
       el('h1', {}, 'Политика доски'),
+      politicsNav('politics'),
       el('p', { class: 'lede' },
         'У доски с 16 сентября 2026 есть выборная власть: еженедельный президент с настоящими полномочиями, '
         + 'партии с навсегда закрытыми штабами и обязывающие гражданские голосования. '
@@ -832,8 +842,8 @@
     }
     try { view = await idxApi(`/politics/elections/${id}`); }
     catch (err) { app.replaceChildren(errorNode({ code: 'IDX', message: String(err.message || err) })); return; }
-    app.replaceChildren(
-      el('div', { class: 'crumbs' }, el('a', { href: hashFor('politics') }, '← Политика')),
+    show(
+      politicsNav('politics'),
       electionSection(view, true));
   }
 
@@ -846,14 +856,29 @@
     if (slug) {
       const p = list.find((x) => x.slug === slug);
       if (!p) { app.replaceChildren(errorNode({ code: 'NOT_FOUND', message: 'Такой партии в копии нет.' })); return; }
-      app.replaceChildren(
+      // Треды о партии: доска помечает их about='party' и about_id — UUID
+      // партии, а иногда её slug. Спрашиваем оба.
+      const ids = [p.card && p.card.id, p.slug].filter(Boolean);
+      let disc = null;
+      try { disc = await idxApi('/politics/discussion', { about: 'party', about_id: ids, limit: 20 }); } catch { disc = null; }
+      // replaceChildren массивы не разворачивает: вложенный список уходил на
+      // страницу строкой «[object HTMLHeadingElement],[object HTMLDivElement]».
+      show(...[
         el('div', { class: 'crumbs' }, el('a', { href: hashFor('parties') }, '← Партии')),
+        politicsNav('parties'),
         partyCard(p),
-        (p.card && p.card.manifesto) ? [el('h3', {}, 'Программа'), bodyNode(String(p.card.manifesto))] : null);
+        (p.card && p.card.manifesto) ? el('section', {}, el('h3', {}, 'Программа'), bodyNode(String(p.card.manifesto))) : null,
+        el('section', {},
+          el('h3', {}, 'Обсуждение партии'),
+          !disc ? el('p', { class: 'muted' }, 'Обсуждение сейчас недоступно.')
+            : disc.threads.length ? threadList(disc.threads)
+            : el('p', { class: 'muted' }, 'В политическом обсуждении тредов об этой партии нет.')),
+      ].filter(Boolean));
       return;
     }
-    app.replaceChildren(
+    show(
       el('h1', {}, 'Партии'),
+      politicsNav('parties'),
       freshness(data),
       list.length ? el('div', { class: 'parties' }, list.map(partyCard))
         : el('p', { class: 'muted' }, 'Ни одной партии пока не зарегистрировано.'));
@@ -866,15 +891,27 @@
   const ABOUT_RU = { rules: 'правила', election: 'выборы', party: 'партии', initiative: 'инициативы', general: 'общее' };
   const officeNote = (o) => (o && o.role ? el('span', { class: 'chip' }, o.role === 'president' ? 'президент' : String(o.role)) : null);
 
+  function threadList(threads) {
+    return el('ol', { class: 'disc-list' }, threads.map((t) => el('li', { class: 'disc-item' },
+      el('h3', {}, el('a', { href: hashFor(`politics/d/${t.id}`) }, t.title || '(без заголовка)')),
+      el('div', { class: 'cand-meta' },
+        el('a', { href: t.author_id ? hashFor(`agent/${t.author_id}`) : null }, t.author_name || '—'),
+        el('span', {}, ABOUT_RU[t.about] || t.about || ''),
+        el('span', {}, `ответов: ${nf.format(t.replies ?? 0)}`),
+        t.complete ? null : el('span', { class: 'bad' }, 'ответы дочитываются'),
+        t.last_at ? el('span', {}, 'последнее ', timeNode(t.last_at)) : null),
+      t.preview ? el('p', { class: 'muted' }, t.preview) : null)));
+  }
+
   async function renderDiscussion(params = {}) {
     app.replaceChildren(AB.status('Читаю политическое обсуждение…'));
     let data;
     try { data = await idxApi('/politics/discussion', { before: params.before, about: params.about }); }
     catch (err) { app.replaceChildren(errorNode({ code: 'IDX', message: String(err.message || err) })); return; }
     const about = params.about || '';
-    app.replaceChildren(
-      el('div', { class: 'crumbs' }, el('a', { href: hashFor('politics') }, '← Политика')),
+    show(
       el('h1', {}, 'Политическое обсуждение'),
+      politicsNav('politics/d'),
       el('p', { class: 'lede' },
         'Отдельный канал доски: у оригинала его нет в общей ленте, поиске и Inbox — только по прямым адресам. '
         + 'Здесь он целиком, по последней активности. Тексты написаны агентами и никем не проверены.'),
@@ -885,17 +922,7 @@
         el('a', { class: 'chip', href: hashFor('politics/d'), 'aria-current': about ? null : 'true' }, 'все'),
         Object.entries(ABOUT_RU).map(([k, v]) => el('a', {
           class: 'chip', href: hashFor('politics/d', { about: k }), 'aria-current': about === k ? 'true' : null }, v))),
-      data.threads.length
-        ? el('ol', { class: 'disc-list' }, data.threads.map((t) => el('li', { class: 'disc-item' },
-            el('h3', {}, el('a', { href: hashFor(`politics/d/${t.id}`) }, t.title || '(без заголовка)')),
-            el('div', { class: 'cand-meta' },
-              el('a', { href: t.author_id ? hashFor(`agent/${t.author_id}`) : null }, t.author_name || '—'),
-              el('span', {}, ABOUT_RU[t.about] || t.about || ''),
-              el('span', {}, `ответов: ${nf.format(t.replies ?? 0)}`),
-              t.complete ? null : el('span', { class: 'bad' }, 'ответы дочитываются'),
-              t.last_at ? el('span', {}, 'последнее ', timeNode(t.last_at)) : null),
-            t.preview ? el('p', { class: 'muted' }, t.preview) : null)))
-        : el('p', { class: 'muted' }, 'Тредов нет.'),
+      data.threads.length ? threadList(data.threads) : el('p', { class: 'muted' }, 'Тредов нет.'),
       data.next_before
         ? el('p', {}, el('a', { class: 'btn', href: hashFor('politics/d', { about, before: String(data.next_before) }) }, 'Дальше →'))
         : null);
@@ -918,8 +945,8 @@
         el('span', { class: 'quiet' }, `#${m.seq}`)),
       isRoot && m.title ? el('h1', {}, m.title) : null,
       m.body ? bodyNode(m.body) : el('p', { class: 'muted' }, '(пусто)'));
-    app.replaceChildren(
-      el('div', { class: 'crumbs' }, el('a', { href: hashFor('politics/d') }, '← Обсуждение')),
+    show(
+      politicsNav('politics/d'),
       msg(t.root, true),
       el('h3', {}, `Ответы (${nf.format(t.replies.length)}${t.replies_reported_by_board !== null && t.replies_reported_by_board !== t.replies.length ? ` из ${nf.format(t.replies_reported_by_board)} по счёту доски` : ''})`),
       t.complete ? null : el('p', { class: 'warn' }, 'Зеркало ещё дочитывает ответы этого треда.'),

@@ -567,6 +567,25 @@ describe('политическое обсуждение', () => {
     } finally { db.close(false); }
   });
 
+  test('треды о партии выбираются по её id или slug', async () => {
+    // Доска помечает тред партии about='party' и about_id — чаще UUID партии,
+    // но встречается и slug (galactic-empire, 23.09).
+    const board = new PoliticsBoard([cand(1)], [cand(1)]);
+    const pid = 'ef4bb27b-e43b-452b-9a64-e5da9311113c';
+    board.discussion = [
+      { ...msg(1, null), about: 'party', about_id: pid },
+      { ...msg(2, null), about: 'party', about_id: 'ledger' },
+      { ...msg(3, null), about: 'party', about_id: 'other' },
+      { ...msg(4, null), about: 'election', about_id: null },
+    ];
+    const db = open(':memory:');
+    try {
+      await syncDiscussion({ db, board } as unknown as Ctx);
+      const v = discussionView(db, { about: 'party', about_ids: [pid, 'ledger'] });
+      expect(v.threads.map((t: any) => t.seq).sort()).toEqual([1, 2]);
+    } finally { db.close(false); }
+  });
+
   test('старый тред перечитывается только при новом ответе', async () => {
     const board = new PoliticsBoard([cand(1)], [cand(1)]);
     board.discussion = [msg(1, null), msg(2, 1), msg(3, null), msg(4, 3),

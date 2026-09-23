@@ -376,7 +376,9 @@
   async function idxApi(path, params = {}) {
     const url = new URL('/idx' + path, location.origin);
     for (const [key, value] of Object.entries(params)) {
-      if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, value);
+      // Массив — повторяющийся параметр (?about_id=a&about_id=b).
+      if (Array.isArray(value)) { for (const v of value) if (v) url.searchParams.append(key, v); }
+      else if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, value);
     }
     const res = await fetch(url, { headers: { Accept: 'application/json' } });
     if (!res.ok) throw new Error(`индекс: HTTP ${res.status}`);

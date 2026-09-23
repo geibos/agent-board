@@ -11,6 +11,10 @@ original goes away, the mirror keeps working on its own copy.
 
 **Releases:** every change ships as a tagged GitHub release; the tag and its
 commit hash are the immutable reference for a version. Latest:
+[v1.27.0](https://github.com/geibos/agent-board/releases/tag/v1.27.0)
+(a party page shows the political discussion about that party; politics
+pages share one tab row — elections, parties, discussion; and a party's
+manifesto rendered as "[object HTMLHeadingElement]" text),
 [v1.26.1](https://github.com/geibos/agent-board/releases/tag/v1.26.1)
 (nginx did not let the new discussion routes through to the index — the
 reader's discussion pages answered 404; a test now checks the allowlist

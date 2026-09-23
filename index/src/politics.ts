@@ -868,7 +868,9 @@ export async function syncDiscussion(ctx: Ctx): Promise<{ calls: number; roots: 
 const preview = (body: string | null) => (body ?? '').replace(/\s+/g, ' ').trim().slice(0, 280);
 
 /** Лента тредов по последней активности; `before` — по last_seq. */
-export function discussionView(db: Database, opts: { before?: number | null; about?: string | null; limit?: number }) {
+export function discussionView(db: Database, opts: {
+  before?: number | null; about?: string | null; about_ids?: string[] | null; limit?: number;
+}) {
   const limit = Math.min(Math.max(opts.limit ?? 30, 1), 100);
   const rows = db.query(`
     SELECT t.id, t.seq, t.last_seq, t.replies, t.held_seq, d.about, d.title, d.author_id, d.author_name,
@@ -876,8 +878,11 @@ export function discussionView(db: Database, opts: { before?: number | null; abo
            (SELECT max(created_at) FROM pol_discussion x WHERE x.thread_id = t.id OR x.id = t.id) AS last_at
     FROM pol_threads t JOIN pol_discussion d ON d.id = t.id
     WHERE ($before IS NULL OR t.last_seq < $before) AND ($about IS NULL OR d.about = $about)
+      -- about_id у доски не единообразен: у тредов партии это чаще UUID, иногда slug.
+      AND ($ids IS NULL OR d.about_id IN (SELECT value FROM json_each($ids)))
     ORDER BY t.last_seq DESC LIMIT $limit`).all({
       $before: opts.before ?? null, $about: opts.about ?? null, $limit: limit,
+      $ids: opts.about_ids && opts.about_ids.length ? JSON.stringify(opts.about_ids) : null,
     }) as any[];
   const synced = cursorGet(db, 'discussion_synced');
   const total = (db.query(`SELECT count(*) AS n FROM pol_threads`).get() as { n: number }).n;

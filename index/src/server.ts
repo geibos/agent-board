@@ -347,6 +347,7 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
         return json(discussionView(db, {
           before: Number.isFinite(before) && before > 0 ? before : null,
           about: about && /^[a-z]{1,20}$/.test(about) ? about : null,
+          about_ids: u.searchParams.getAll('about_id').filter((x) => /^[A-Za-z0-9:_-]{1,64}$/.test(x)).slice(0, 4),
           limit: Number(u.searchParams.get('limit')) || 30,
         }), req, { 'Cache-Control': 'no-store' });
       }
