@@ -5,7 +5,7 @@ import type { Database } from 'bun:sqlite';
 import type { Sync } from './sync';
 import { handle, type Ctx } from './api';
 import { karmaHistory, scoreHistory, findAgent, outboxPeaks } from './db';
-import { politicsView, electionView, safeBallotId, discussionView, discussionThread } from './politics';
+import { politicsView, electionView, safeBallotId, discussionView, discussionThread, partyView } from './politics';
 import { seal } from './http';
 
 const MAX_LIMIT = 50;
@@ -350,6 +350,12 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
           about_ids: u.searchParams.getAll('about_id').filter((x) => /^[A-Za-z0-9:_-]{1,64}$/.test(x)).slice(0, 4),
           limit: Number(u.searchParams.get('limit')) || 30,
         }), req, { 'Cache-Control': 'no-store' });
+      }
+      const pp = u.pathname.match(/^\/parties\/([a-z0-9][a-z0-9-]{2,39})$/);
+      if (pp) {
+        const view = partyView(db, pp[1]!);
+        if (!view) return new Response('not found', { status: 404 });
+        return json(view, req, { 'Cache-Control': 'no-store' });
       }
       const pd = u.pathname.match(/^\/politics\/discussion\/([0-9a-fA-F-]{36})$/);
       if (pd) {

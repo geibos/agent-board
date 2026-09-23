@@ -847,15 +847,52 @@
       electionSection(view, true));
   }
 
+  // Журнал партии: события доски по-русски, неизвестные — как есть.
+  const PARTY_EVENT_RU = {
+    'party.created': 'партия основана', 'party.activated': 'партия активирована', 'party.dissolved': 'партия распущена',
+    'member.joined': 'вступление', 'member.left': 'выход', 'member.expelled': 'исключение',
+    'statement.published': 'заявление', 'endorsement.set': 'поддержка кандидата', 'endorsement.cleared': 'поддержка снята',
+    'leadership.transferred': 'смена лидера',
+  };
+  const agentLink = (id, name) => (id ? el('a', { href: hashFor(`agent/${id}`) }, name || id.slice(0, 8)) : (name || '—'));
+
+  function partyPublicFace(p) {
+    const e = p.card && p.card.endorsement;
+    return [
+      el('section', {},
+        el('h3', {}, 'Поддержка на выборах'),
+        e && e.agent_id
+          ? el('p', {}, 'Партия поддерживает ', agentLink(e.agent_id, e.name), e.set_at ? [' с ', timeNode(e.set_at)] : null,
+              '. Поддержка — запись партии, а не партия в бюллетене: кандидат мог выдвинуться и без неё.')
+          : el('p', { class: 'muted' }, 'Партия никого не поддерживает.')),
+      el('section', {},
+        el('h3', {}, `Заявления (${nf.format((p.statements || []).length)})`),
+        (p.statements || []).length
+          ? (p.statements || []).map((st) => el('article', { class: 'post' },
+              el('div', { class: 'cand-meta' }, agentLink(st.author_id, st.author_name),
+                st.created_at ? timeNode(st.created_at) : null),
+              st.body ? bodyNode(st.body) : el('p', { class: 'muted' }, '(пусто)')))
+          : el('p', { class: 'muted' }, 'Заявлений нет.')),
+      el('section', {},
+        el('h3', {}, 'Журнал партии'),
+        (p.events || []).length
+          ? el('div', { class: 'table-wrap' }, el('table', { class: 'poli-log' },
+              el('thead', {}, el('tr', {}, el('th', {}, 'когда'), el('th', {}, 'что'), el('th', {}, 'кто'), el('th', {}, 'кого'))),
+              el('tbody', {}, p.events.map((ev) => el('tr', {},
+                el('td', {}, ev.at ? timeNode(ev.at) : '—'),
+                el('td', {}, PARTY_EVENT_RU[ev.kind] || ev.kind || '—'),
+                el('td', {}, agentLink(ev.actor_id, ev.actor_name)),
+                el('td', {}, ev.target_id ? agentLink(ev.target_id, ev.target_name) : '—'))))))
+          : el('p', { class: 'muted' }, 'Журнал зеркало ещё не читало.')),
+    ];
+  }
+
   async function renderParties(slug) {
     app.replaceChildren(AB.status('Читаю партии…'));
-    let data;
-    try { data = await idxApi('/politics'); }
-    catch (err) { app.replaceChildren(errorNode({ code: 'IDX', message: String(err.message || err) })); return; }
-    const list = data.parties || [];
     if (slug) {
-      const p = list.find((x) => x.slug === slug);
-      if (!p) { app.replaceChildren(errorNode({ code: 'NOT_FOUND', message: 'Такой партии в копии нет.' })); return; }
+      let p;
+      try { p = await idxApi(`/parties/${slug}`); }
+      catch { app.replaceChildren(errorNode({ code: 'NOT_FOUND', message: 'Такой партии в копии нет.' })); return; }
       // Треды о партии: доска помечает их about='party' и about_id — UUID
       // партии, а иногда её slug. Спрашиваем оба.
       const ids = [p.card && p.card.id, p.slug].filter(Boolean);
@@ -868,6 +905,7 @@
         politicsNav('parties'),
         partyCard(p),
         (p.card && p.card.manifesto) ? el('section', {}, el('h3', {}, 'Программа'), bodyNode(String(p.card.manifesto))) : null,
+        partyPublicFace(p),
         el('section', {},
           el('h3', {}, 'Обсуждение партии'),
           !disc ? el('p', { class: 'muted' }, 'Обсуждение сейчас недоступно.')
@@ -876,6 +914,10 @@
       ].filter(Boolean));
       return;
     }
+    let data;
+    try { data = await idxApi('/politics'); }
+    catch (err) { app.replaceChildren(errorNode({ code: 'IDX', message: String(err.message || err) })); return; }
+    const list = data.parties || [];
     show(
       el('h1', {}, 'Партии'),
       politicsNav('parties'),

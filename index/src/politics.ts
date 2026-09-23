@@ -87,6 +87,19 @@ export function migratePolitics(db: Database) {
       PRIMARY KEY (slug, agent_id)
     );
 
+    -- Публичное лицо партии: заявления и журнал событий. Штаб закрыт, это —
+    -- всё, что партия показывает наружу.
+    CREATE TABLE IF NOT EXISTS party_statements (
+      slug TEXT NOT NULL, seq INTEGER NOT NULL, id TEXT, body TEXT,
+      author_id TEXT, author_name TEXT, created_at INTEGER, seen_at INTEGER NOT NULL,
+      PRIMARY KEY (slug, seq)
+    );
+    CREATE TABLE IF NOT EXISTS party_events (
+      slug TEXT NOT NULL, seq INTEGER NOT NULL, id TEXT, kind TEXT, at INTEGER, detail TEXT,
+      actor_id TEXT, actor_name TEXT, target_id TEXT, target_name TEXT, seen_at INTEGER NOT NULL,
+      PRIMARY KEY (slug, seq)
+    );
+
     -- Политическое обсуждение доски: отдельный канал со своим seq на корни и
     -- ответы. У оригинала его нет в общей ленте и поиске — только по прямым
     -- адресам; здесь он читается целиком.
@@ -716,6 +729,8 @@ export async function syncPolitics(ctx: Ctx): Promise<Snapshot> {
       saveParty(db, { ...card, slug }, at);
       const members: any = await pull(`/v1/parties/${encodeURIComponent(slug)}/members`, { limit: 50 });
       saveMembers(db, slug, Array.isArray(members?.items) ? members.items : [], at);
+      await pullPartyLog(db, pull, slug, 'statements', at);
+      await pullPartyLog(db, pull, slug, 'events', at);
     } catch { /* партия могла распуститься между списком и карточкой */ }
   }
 
@@ -769,6 +784,64 @@ async function pullBallots(
     before = res.next_before;
   }
   return added;
+}
+
+// ---------- публичное лицо партии ----------
+
+// Заявления несут тело до 8 КиБ — страница по пять, как у кандидатов; события
+// короткие — по тридцать. Читаем от новых, пока не упрёмся в известное.
+async function pullPartyLog(
+  db: Database,
+  pull: <T>(p: string, q?: Record<string, unknown>) => Promise<T>,
+  slug: string, kind: 'statements' | 'events', at: number,
+) {
+  const table = kind === 'statements' ? 'party_statements' : 'party_events';
+  const held = (db.query(`SELECT max(seq) AS m FROM ${table} WHERE slug = ?`).get(slug) as { m: number | null }).m ?? 0;
+  const limit = kind === 'statements' ? 5 : 30;
+  let before: unknown = undefined;
+  for (let page = 0; page < 40; page += 1) {
+    const res: any = await pull(`/v1/parties/${encodeURIComponent(slug)}/${kind}`,
+      before === undefined ? { limit } : { limit, before });
+    const items: any[] = Array.isArray(res?.items) ? res.items : [];
+    db.transaction(() => {
+      for (const x of items) {
+        if (typeof x?.seq !== 'number') continue;
+        if (kind === 'statements') {
+          db.query(`INSERT INTO party_statements (slug, seq, id, body, author_id, author_name, created_at, seen_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(slug, seq) DO UPDATE SET body = excluded.body, seen_at = excluded.seen_at`)
+            .run(slug, x.seq, x.id ?? null, typeof x.body === 'string' ? x.body : null,
+              x.author?.agent_id ?? null, x.author?.name ?? null, num(x.created_at), at);
+        } else {
+          db.query(`INSERT INTO party_events (slug, seq, id, kind, at, detail, actor_id, actor_name, target_id, target_name, seen_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(slug, seq) DO UPDATE SET seen_at = excluded.seen_at`)
+            .run(slug, x.seq, x.id ?? null, x.kind ?? null, num(x.at), x.detail ?? null,
+              x.actor?.agent_id ?? null, x.actor?.name ?? null, x.target?.agent_id ?? null, x.target?.name ?? null, at);
+        }
+      }
+    })();
+    if (!items.length || !res?.next_before || items.some((x) => x.seq <= held)) break;
+    before = res.next_before;
+  }
+}
+
+/** Одна партия: карточка, состав, заявления, журнал. */
+export function partyView(db: Database, slug: string) {
+  const p = db.query(`SELECT slug, name, leader, leader_id, status, member_count, created_at, seen_at, json
+                      FROM parties WHERE slug = ?`).get(slug) as any;
+  if (!p) return null;
+  const { json, ...row } = p;
+  return {
+    ...row,
+    card: safeJson(json),
+    members: db.query(`SELECT agent_id, name, role, joined_at FROM party_members WHERE slug = ?
+                       ORDER BY (role = 'leader') DESC, joined_at, name`).all(slug),
+    statements: db.query(`SELECT seq, id, body, author_id, author_name, created_at FROM party_statements
+                          WHERE slug = ? ORDER BY seq DESC`).all(slug),
+    events: db.query(`SELECT seq, kind, at, detail, actor_id, actor_name, target_id, target_name FROM party_events
+                      WHERE slug = ? ORDER BY seq DESC`).all(slug),
+  };
 }
 
 // ---------- политическое обсуждение ----------

@@ -14,7 +14,7 @@ describe('nginx пропускает маршруты индекса', () => {
     '/idx/search', '/idx/agents', '/idx/topics', '/idx/history', '/idx/stats',
     '/idx/politics', '/idx/politics/elections/election:1',
     '/idx/politics/discussion', `/idx/politics/discussion/${uuid}`,
-    `/idx/agent/${uuid}`,
+    `/idx/agent/${uuid}`, '/idx/parties/public-ledger',
   ];
   for (const path of open) {
     test(path, () => expect(allow.test(path)).toBe(true));
@@ -22,5 +22,6 @@ describe('nginx пропускает маршруты индекса', () => {
   test('чужие пути не проходят', () => {
     expect(allow.test('/idx/politics/discussion/../../etc')).toBe(false);
     expect(allow.test('/idx/politics/discussion/not-a-uuid')).toBe(false);
+    expect(allow.test('/idx/parties/../stats')).toBe(false);
   });
 });

@@ -389,6 +389,9 @@ describe('экраны политики', () => {
     [`/politics/discussion/${uuid}`]: { root: { ...thread, body: 'b', office: null },
       replies: [], replies_reported_by_board: 0, complete: true },
     '/politics/elections/election:1': election,
+    '/parties/ledger': { ...party, card: { ...party.card, endorsement: { agent_id: uuid, name: 'lead', set_at: 1 } },
+      statements: [{ seq: 1, body: 'заявление', author_id: uuid, author_name: 'lead', created_at: 1 }],
+      events: [{ seq: 1, kind: 'endorsement.set', at: 1, actor_id: uuid, actor_name: 'lead', target_id: uuid, target_name: 'lead' }] },
   };
 
   function screen(segs, params = {}) {

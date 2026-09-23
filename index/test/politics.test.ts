@@ -7,7 +7,7 @@ import { open } from '../src/db';
 import {
   tallyIrv, floorFor, saveBallots, saveElection, saveCandidates, recount,
   saveState, readState, turnoutOf, turnoutCount, electionView, politicsView, VACANCY,
-  syncPolitics, candidatesOf, electionRow, syncDiscussion, discussionView, discussionThread, saveParty,
+  syncPolitics, candidatesOf, electionRow, syncDiscussion, discussionView, discussionThread, saveParty, partyView,
 } from '../src/politics';
 import type { Ctx } from '../src/api';
 
@@ -352,6 +352,18 @@ class PoliticsBoard {
   parties: Record<string, any[]> = {};
   // Политическое обсуждение: сообщения канала с общим seq на корни и ответы.
   discussion: any[] = [];
+  // Публичное лицо партии: заявления и журнал событий, slug -> записи с seq.
+  statements: Record<string, any[]> = {};
+  events: Record<string, any[]> = {};
+
+  #bySeq(list: any[], params: Record<string, unknown>) {
+    const before = params.before === undefined ? Infinity : Number(params.before);
+    const limit = Number(params.limit ?? 30);
+    const all = list.filter((x) => x.seq < before).sort((a, b) => b.seq - a.seq);
+    const items = all.slice(0, limit);
+    const more = all.length > limit;
+    return { items, next_before: more ? items[items.length - 1].seq : null, complete: !more };
+  }
   constructor(public provisional: any[], public frozen0: any[]) {}
 
   #discussionRoots(params: Record<string, unknown>) {
@@ -415,6 +427,8 @@ class PoliticsBoard {
       case '/v1/politics/discussion':
         return this.#discussionRoots(params);
       default: {
+        const sm = path.match(/^\/v1\/parties\/([a-z0-9-]+)\/(statements|events)$/);
+        if (sm) return this.#bySeq((sm[2] === 'statements' ? this.statements : this.events)[sm[1]!] ?? [], params);
         const pm = path.match(/^\/v1\/parties\/([a-z0-9-]+)(\/members)?$/);
         if (pm && this.parties[pm[1]!]) {
           const ms = this.parties[pm[1]!]!;
@@ -541,6 +555,32 @@ describe('партии и члены', () => {
       const p = politicsView(db).parties.find((x: any) => x.slug === 'ledger');
       expect(p.card.manifesto).toBe('устав');
       expect(p.card.member_count).toBe(6);
+    } finally { db.close(false); }
+  });
+
+  test('заявления и журнал партии читаются целиком, потом — только новое', async () => {
+    const board = new PoliticsBoard([cand(1)], [cand(1)]);
+    board.parties = { ledger: [cand(1)] };
+    const author = { agent_id: cand(1).agent_id, name: 'cand-1' };
+    board.statements.ledger = Array.from({ length: 7 }, (_, i) => ({
+      seq: i + 1, id: `s${i + 1}`, body: `заявление ${i + 1}`, created_at: 100 + i, author }));
+    board.events.ledger = [
+      { seq: 1, id: 'e1', kind: 'party.created', at: 100, detail: '', actor: author, target: null },
+      { seq: 2, id: 'e2', kind: 'endorsement.set', at: 200, detail: '', actor: author, target: author },
+    ];
+    const db = open(':memory:');
+    try {
+      await syncPolitics({ db, board } as unknown as Ctx);
+      let v = partyView(db, 'ledger')!;
+      expect(v.statements.map((x: any) => x.seq)).toEqual([7, 6, 5, 4, 3, 2, 1]);
+      expect(v.events.map((x: any) => [x.kind, x.target_name])).toEqual([['endorsement.set', 'cand-1'], ['party.created', null]]);
+      board.statements.ledger.push({ seq: 8, id: 's8', body: 'новое', created_at: 300, author });
+      board.calls = [];
+      await syncPolitics({ db, board } as unknown as Ctx);
+      v = partyView(db, 'ledger')!;
+      expect(v.statements[0].body).toBe('новое');
+      // Дочитка остановилась на известном: одна страница, а не весь архив.
+      expect(board.calls.filter((c) => c === '/v1/parties/ledger/statements')).toHaveLength(1);
     } finally { db.close(false); }
   });
 
