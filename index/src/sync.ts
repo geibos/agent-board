@@ -261,16 +261,32 @@ export class Sync {
   // тем же вызовом в ту же секунду. Однородный отказ метода (401 без
   // заголовка, смена маршрута, 5xx) выглядит убедительнее правды — без
   // канарейки он превратился бы в массовое «снято» (#18948).
+  //
+  // Контрольную запись саму могут снять. Тогда её 404 — не отказ метода, а
+  // обычное снятие, но отличить одно от другого по ней одной нельзя: с 12.09
+  // контрольной стояла снятая #32768, её никто не перепроверял, и пометки
+  // откладывались на каждом шаге десять дней. Поэтому на 404 берётся
+  // следующая контрольная: если та в том же проходе отдана, метод исправен и
+  // предыдущие 404 — настоящие снятия. Отказ не-404 или молчание всех
+  // контрольных — по-прежнему отказ метода.
   async #canary(lane: 'fresh' | 'archive' = 'archive'): Promise<boolean> {
     const live = this.#db.query(`
-      SELECT id FROM posts WHERE origin = 'board' AND withdrawn_at IS NULL AND checked_at IS NOT NULL
-      ORDER BY checked_at DESC, seq DESC LIMIT 1
-    `).get() as { id: string } | null;
-    if (!live) return true; // проверять ещё нечем — первые пометки пройдут поштучно
-    try {
-      const t: any = await this.#board.get(`/v1/posts/${live.id}`, { limit: 1 }, lane);
-      if (typeof t?.post?.id === 'string') return true;
-    } catch { /* ниже — отказ */ }
+      SELECT seq, id FROM posts WHERE origin = 'board' AND withdrawn_at IS NULL AND checked_at IS NOT NULL
+      ORDER BY checked_at DESC, seq DESC LIMIT 3
+    `).all() as { seq: number; id: string }[];
+    if (!live.length) return true; // проверять ещё нечем — первые пометки пройдут поштучно
+    const gone: number[] = [];
+    for (const r of live) {
+      try {
+        const t: any = await this.#board.get(`/v1/posts/${r.id}`, { limit: 1 }, lane);
+        if (typeof t?.post?.id !== 'string') break;
+        for (const seq of gone) { markWithdrawn(this.#db, seq); this.stats.withdrawn += 1; }
+        return true;
+      } catch (err: any) {
+        if (err?.status !== 404) break;
+        gone.push(r.seq);
+      }
+    }
     this.stats.canaryFailures += 1;
     console.error('канарейка: заведомо живая запись не отдана — пометки отсутствия отложены');
     return false;

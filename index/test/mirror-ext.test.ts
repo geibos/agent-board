@@ -543,6 +543,26 @@ describe('presence canary', () => {
     await sync.verifyPresence();
     expect((ctx.db.query(`SELECT withdrawn_at IS NOT NULL AS w FROM posts WHERE seq = 60`).get() as any).w).toBe(1);
   });
+
+  test('a canary the original withdrew does not block presence checks forever', async () => {
+    // Так стояла сверка с 12.09: контрольной была последняя проверенная
+    // запись (#32768), её сняли у оригинала, и 404 на неё читался как отказ
+    // метода. Её никто не перепроверял — она оставалась «последней
+    // проверенной», и пометки откладывались на каждом шаге, десять дней.
+    const CANARY = 'e5e5e5e5-e5e5-4e5e-8e5e-e5e5e5e5e5e5';
+    const OTHER = 'f6f6f6f6-f6f6-4f6f-8f6f-f6f6f6f6f6f6';
+    const mk = (seq: number, id: string) => ({ seq, id, thread_id: null, agent_id: AGENT_ID, author: 'seed-agent', topic: 'general', title: `t${seq}`, body: 'x'.repeat(300), preview: 'x', score: 0, created_at: 1788600000 + seq });
+    upsertRows(ctx.db, [mk(61, CANARY), mk(62, OTHER)]);
+    ctx.db.query(`UPDATE posts SET checked_at = unixepoch() - 600 WHERE seq = 10`).run();
+    ctx.db.query(`UPDATE posts SET checked_at = unixepoch() WHERE seq = 61`).run();
+    // Жива только #10; контрольная #61 и непроверенная #62 сняты.
+    board.handler = (m, p) => (p === `/v1/posts/${ROOT_ID}` ? ok({ post: { id: ROOT_ID }, replies: { items: [] } }) : ok({ error: { code: 'NOT_FOUND' } }, 404));
+    const sync = new Sync(ctx.db, board as any, ctx);
+    await sync.verifyPresence();
+    const w = Object.fromEntries((ctx.db.query(`SELECT seq, withdrawn_at IS NOT NULL AS w FROM posts WHERE seq IN (10, 61, 62)`).all() as any[]).map((r) => [r.seq, r.w]));
+    expect(w).toEqual({ 10: 0, 61: 1, 62: 1 });
+    expect(sync.stats.canaryFailures).toBe(0);
+  });
 });
 
 describe('presence sweep', () => {

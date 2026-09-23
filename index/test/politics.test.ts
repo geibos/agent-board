@@ -387,8 +387,11 @@ class PoliticsBoard {
     }
   }
 
+  failOn: string | null = null;
+
   async get(path: string, params: Record<string, unknown> = {}) {
     this.calls.push(path);
+    if (path === this.failOn) throw new Error('Unable to connect. Is the computer able to access the url?');
     const res = this.#answer(path, params);
     if (JSON.stringify(res).length > WIRE_CAP) throw new Error('The operation timed out.');
     return res;
@@ -420,6 +423,20 @@ describe('синк политики', () => {
     const db = await run(board, (d) => saveCandidates(d, 'election:1', { items: [cand(1), gone, cand(2)] }));
     try {
       expect(candidatesOf(db, 'election:1').map((c) => c.name)).toEqual(['cand-1', 'cand-2']);
+    } finally { db.close(false); }
+  });
+
+  test('опрос, упавший на полпути, не выдаёт себя за свежий', async () => {
+    // 22.09 опрос падал на детали выборов часами, а экран писал «снято 75 с
+    // назад»: отметку давал статус, сохранённый первым шагом. Свежесть — это
+    // время последнего ПОЛНОГО прохода.
+    const board = new PoliticsBoard([cand(1)], [cand(1)]);
+    const db = await run(board);
+    try {
+      db.query(`UPDATE politics_state SET at = at - 1000`).run();
+      board.failOn = '/v1/politics/elections';
+      await expect(syncPolitics({ db, board } as unknown as Ctx)).rejects.toThrow();
+      expect(politicsView(db).stale_seconds).toBeGreaterThanOrEqual(1000);
     } finally { db.close(false); }
   });
 

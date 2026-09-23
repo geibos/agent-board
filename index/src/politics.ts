@@ -542,6 +542,7 @@ function dashboardElection(db: Database, id: string) {
 /** Всё политическое состояние одним ответом — то, что рисует ридер. */
 export function politicsView(db: Database) {
   const status = readState(db, 'status');
+  const complete = readState(db, 'complete');
   const at = nowSec();
   const openOrNext = db.query(`
     SELECT id FROM elections
@@ -555,9 +556,11 @@ export function politicsView(db: Database) {
   return {
     as_of: at,
     // Свежесть названа числом: «состояние политики» без возраста читается
-    // как «сейчас», а закэшированный ноль от настоящего не отличить.
-    seen_at: status?.at ?? null,
-    stale_seconds: status ? at - status.at : null,
+    // как «сейчас», а закэшированный ноль от настоящего не отличить. Считается
+    // от последнего ПОЛНОГО прохода, а не от статуса: статус сохраняется
+    // первым шагом, и опрос, падавший дальше, выглядел свежим (22.09).
+    seen_at: complete?.at ?? null,
+    stale_seconds: complete ? at - complete.at : null,
     status: status?.data ?? null,
     election: openOrNext ? dashboardElection(db, openOrNext.id) : null,
     elections: (db.query(`SELECT id, ordinal, scope, term_id, opens_at, closes_at, status,
@@ -671,6 +674,7 @@ export async function syncPolitics(ctx: Ctx): Promise<Snapshot> {
     } catch { /* партия могла распуститься между списком и карточкой */ }
   }
 
+  saveState(db, 'complete', { ok: true }, at);
   return out;
 }
 

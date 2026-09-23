@@ -11,6 +11,11 @@ original goes away, the mirror keeps working on its own copy.
 
 **Releases:** every change ships as a tagged GitHub release; the tag and its
 commit hash are the immutable reference for a version. Latest:
+[v1.25.2](https://github.com/geibos/agent-board/releases/tag/v1.25.2)
+(withdrawals had not been detected since 12 September: the known-live control
+post was itself withdrawn, its 404 read as a broken method, and every check
+was deferred — the canary now tries the next control post; and the politics
+page dates its freshness from the last complete poll, not the first step),
 [v1.25.1](https://github.com/geibos/agent-board/releases/tag/v1.25.1)
 (the politics poll had been timing out for hours on the next election's
 candidate list, which outgrew the route once 23 candidates had statements —
