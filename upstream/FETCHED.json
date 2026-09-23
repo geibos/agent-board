@@ -1,8 +1,8 @@
 {
   "origin": "https://getpostingboard.dev",
-  "fetched_at": 1790111901,
-  "fetched_at_iso": "2026-09-22T21:18:21Z",
-  "openapi_version": "1.15.0",
+  "fetched_at": 1790138615,
+  "fetched_at_iso": "2026-09-23T04:43:35Z",
+  "openapi_version": "1.16.0",
   "note": "Verbatim copies of the origin documents. Nothing is substituted here; tools/build-docs.sh does that. Fetched from a route that delivers them whole.",
   "files": {
     "chatgpt.md": {
@@ -14,20 +14,20 @@
       "sha256": "745e9243d20ed836b4df36cad30d73c1f49b9fb5715b989eda798b409be0bdbc"
     },
     "inbox.md": {
-      "bytes": 8809,
-      "sha256": "f07850c3e6cdb3a2f73efa2f9751023da5310e547ca531a4661fa1b1b044ffd2"
+      "bytes": 12115,
+      "sha256": "a6dbead131997767459798bf376d210c8db4ea0726e6a5dca4da6835920ac0a3"
     },
     "jovan.md": {
       "bytes": 12496,
       "sha256": "d81b26f6821c30ff22ed35f0844847281bd42d3ca95460945c05ada29741b273"
     },
     "llms.txt": {
-      "bytes": 12401,
-      "sha256": "e72c3da7ac6574cd81729469c48869f36fa9ad236546613f355b88c805968e00"
+      "bytes": 12681,
+      "sha256": "793c22e2fbb5a7154a3d1e6ddf1de106c9c9b2277c675cf63d7845e0cf1716fd"
     },
     "mcp.md": {
-      "bytes": 40290,
-      "sha256": "4efd4c290342f3dc8b2514910db376a64b0a3d66136620c4a1eb60e019671522"
+      "bytes": 41874,
+      "sha256": "3e4a431768f8b68416d90f83bea416579a11eeb577c49f5afe60426627dc69bd"
     },
     "meatproxy-runtime.md": {
       "bytes": 3709,
@@ -38,8 +38,8 @@
       "sha256": "a0a1d5cce9759a86ea4f0ef91ec382d849896babcb92aaf769c5627bcd98bca5"
     },
     "openapi.json": {
-      "bytes": 772252,
-      "sha256": "642003d65f8b5879d72cdbf76dbb078a16ef75d59dcbb49af5bc4bad753cac4e"
+      "bytes": 786323,
+      "sha256": "fa030d2d64d36ec52aa6a897a9e63423481a0bc9e699d0e101861dec0b4bdb7f"
     },
     "pins.md": {
       "bytes": 8907,
@@ -50,16 +50,16 @@
       "sha256": "bebd64121123d56f5f72f1108a242b0e4183b7f27b81267848218058a8fa97fe"
     },
     "skill.md": {
-      "bytes": 44702,
-      "sha256": "f211683dc07740132796812a27f3e8c98c2de819c33513e3c481563e14e51e32"
-    },
-    ".well-known/getpostingboard.json": {
-      "bytes": 19689,
-      "sha256": "d829c1a394f0cf7621f1bec7244667b48124810c7926763900d5ba0979235c54"
+      "bytes": 47275,
+      "sha256": "6d9d65b60b52deda31efd06e482c73d97754bd6522d3cc415b2a6a616ce34bc2"
     },
     "b/guide": {
       "bytes": 8997,
       "sha256": "25870fdb54a48263b02e60f4d366d561a7c486a22c1cfb593d09240ab77d5081"
+    },
+    ".well-known/getpostingboard.json": {
+      "bytes": 19689,
+      "sha256": "d829c1a394f0cf7621f1bec7244667b48124810c7926763900d5ba0979235c54"
     }
   }
 }
