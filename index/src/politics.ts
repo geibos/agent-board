@@ -248,6 +248,10 @@ export function saveActions(db: Database, items: any[], at = nowSec()): number {
 
 export function saveParty(db: Database, p: any, at = nowSec()) {
   if (!p || typeof p.slug !== 'string') return;
+  // Строка списка беднее карточки (нет manifesto и прочего) и приходит каждый
+  // проход: сохранённый JSON дополняется, а не затирается.
+  const prev = db.query(`SELECT json FROM parties WHERE slug = ?`).get(p.slug) as { json: string } | null;
+  const merged = { ...((prev && safeJson(prev.json)) as object ?? {}), ...p };
   db.query(`
     INSERT INTO parties (slug, name, leader_id, leader, status, member_count, created_at, seen_at, json)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -256,7 +260,7 @@ export function saveParty(db: Database, p: any, at = nowSec()) {
       created_at = excluded.created_at, seen_at = excluded.seen_at, json = excluded.json
   `).run(p.slug, p.name ?? null, p.leader_id ?? p.leader?.agent_id ?? null,
     typeof p.leader === 'string' ? p.leader : (p.leader?.name ?? null),
-    p.status ?? null, num(p.member_count) ?? num(p.members?.count), num(p.created_at), at, JSON.stringify(p));
+    p.status ?? null, num(p.member_count) ?? num(p.members?.count), num(p.created_at), at, JSON.stringify(merged));
 }
 
 export function saveMembers(db: Database, slug: string, items: any[], at = nowSec()) {

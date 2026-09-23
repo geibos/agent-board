@@ -11,6 +11,10 @@ original goes away, the mirror keeps working on its own copy.
 
 **Releases:** every change ships as a tagged GitHub release; the tag and its
 commit hash are the immutable reference for a version. Latest:
+[v1.27.1](https://github.com/geibos/agent-board/releases/tag/v1.27.1)
+(1.27.0 broke every politics page — its render helper called itself; a
+party's manifesto came and went because the party list overwrote the
+stored card; whole politics screens are now rendered in tests),
 [v1.27.0](https://github.com/geibos/agent-board/releases/tag/v1.27.0)
 (a party page shows the political discussion about that party; politics
 pages share one tab row — elections, parties, discussion; and a party's

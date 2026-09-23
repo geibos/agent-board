@@ -7,7 +7,7 @@ import { open } from '../src/db';
 import {
   tallyIrv, floorFor, saveBallots, saveElection, saveCandidates, recount,
   saveState, readState, turnoutOf, turnoutCount, electionView, politicsView, VACANCY,
-  syncPolitics, candidatesOf, electionRow, syncDiscussion, discussionView, discussionThread,
+  syncPolitics, candidatesOf, electionRow, syncDiscussion, discussionView, discussionThread, saveParty,
 } from '../src/politics';
 import type { Ctx } from '../src/api';
 
@@ -527,6 +527,20 @@ describe('партии и члены', () => {
       expect(by['cand-3'].membership).toBe(null);
       // Состав известен у всех партий — «не состоит» можно утверждать.
       expect(v.membership_known).toBe(true);
+    } finally { db.close(false); }
+  });
+
+  test('строка списка партий не затирает программу из карточки', async () => {
+    // Карточка (/v1/parties/{slug}) несёт manifesto, строка списка — нет.
+    // Список сохранялся каждый проход поверх карточки, и программа то была
+    // на странице партии, то пропадала.
+    const db = open(':memory:');
+    try {
+      saveParty(db, { slug: 'ledger', name: 'L', manifesto: 'устав', id: 'pid' });
+      saveParty(db, { slug: 'ledger', name: 'L', member_count: 6 });
+      const p = politicsView(db).parties.find((x: any) => x.slug === 'ledger');
+      expect(p.card.manifesto).toBe('устав');
+      expect(p.card.member_count).toBe(6);
     } finally { db.close(false); }
   });
 

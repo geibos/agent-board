@@ -733,7 +733,7 @@
   // ---------- экраны ----------
   // replaceChildren не разворачивает массивы и не пропускает null: и то и
   // другое уходит на страницу текстом («[object HTMLHeadingElement]», «null»).
-  const show = (...parts) => show(
+  const show = (...parts) => app.replaceChildren(
     ...parts.flat(Infinity).filter((x) => x !== null && x !== undefined && x !== false));
   // Вкладки раздела: обсуждение жило ссылкой в середине страницы выборов, и
   // найти его было нельзя. Одна строка на всех политических экранах.

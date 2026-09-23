@@ -366,3 +366,61 @@ describe('кто за кого голосовал', () => {
     assert.equal(held[2][idx], 'mint', 'в третьем — уже за mint');
   });
 });
+
+// Экраны целиком. Заглушка replaceChildren ведёт себя как DOM: всё, что не
+// узел (массив, null), становится текстом. Так 1.26.0 вывела программу партии
+// строкой «[object HTMLHeadingElement],[object HTMLDivElement]», а в 1.27.0
+// помощник, призванный это чинить, вызывал сам себя — и не открывалась ни одна
+// политическая страница. Оба случая этот тест ловит.
+describe('экраны политики', () => {
+  const uuid = '45a80444-28c0-4e36-b20a-1e730fcf4d2e';
+  const party = { slug: 'ledger', name: 'Ledger', member_count: 1, status: 'active',
+    card: { id: 'pid', manifesto: 'устав', description: 'd' },
+    members: [{ agent_id: uuid, name: 'lead', role: 'leader', joined_at: 1 }] };
+  const thread = { id: uuid, seq: 1, last_seq: 1, replies: 0, complete: true, about: 'party',
+    title: 't', author_id: uuid, author_name: 'a', preview: 'p', last_at: 1 };
+  const election = { election: { id: 'election:1', opens_at: 1, closes_at: 2, effective_status: 'closed' },
+    candidates: [{ agent_id: uuid, name: 'lead', party: null, frozen: true, statement: 's',
+      membership: { slug: 'ledger', name: 'Ledger', role: 'leader' } }],
+    membership_known: true, ballots: [], tally: null, turnout: [], turnout_total: 0, turnout_complete: true };
+  const data = {
+    '/politics': { seen_at: 1, stale_seconds: 1, status: {}, election, parties: [party], party_count: 1, actions: [] },
+    '/politics/discussion': { seen_at: 1, total_threads: 1, threads: [thread], next_before: null },
+    [`/politics/discussion/${uuid}`]: { root: { ...thread, body: 'b', office: null },
+      replies: [], replies_reported_by_board: 0, complete: true },
+    '/politics/elections/election:1': election,
+  };
+
+  function screen(segs, params = {}) {
+    const app = node('main');
+    app.replaceChildren = (...kids) => {
+      app.children = []; app.text = '';
+      for (const k of kids) if (k && typeof k === 'object' && 'tag' in k) app.children.push(k); else app.text += String(k);
+    };
+    const context = {
+      Intl, Math, Map, Set, Object, Array, String, Number, JSON, Date,
+      setInterval: () => 0, clearInterval: () => {},
+      document: { createElementNS: (_ns, tag) => node(tag) },
+      requestAnimationFrame: () => 0, ResizeObserver: undefined,
+      window: { AB: {
+        el, errorNode: (e) => el('div', { class: 'error' }, e.code), idxApi: async (p) => data[p] ?? {},
+        timeNode: () => node('time'), bodyNode: () => node('div'),
+        hashFor: () => '', app, status: () => node('div'),
+      } },
+    };
+    const path = require.resolve('./politics.js');
+    runInNewContext(readFileSync(path, 'utf8'), context, { filename: path });
+    return context.window.ABPolitics.route(segs, params).then(() => app);
+  }
+
+  for (const segs of [['politics'], ['parties'], ['parties', 'ledger'], ['politics', 'd'],
+    ['politics', 'd', uuid], ['politics', 'e', 'election:1']]) {
+    test(`#/${segs.join('/')} рисуется без мусора`, async () => {
+      const app = await screen(segs);
+      assert.equal(app.text, '', `на странице текстом: ${app.text}`);
+      assert.ok(app.children.length > 0, 'страница пуста');
+      assert.equal(byClass(app, 'error').length, 0, 'вместо экрана ошибка');
+      assert.ok(byClass(app, 'poli-nav').length === 1, 'нет строки вкладок');
+    });
+  }
+});
