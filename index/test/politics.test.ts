@@ -7,7 +7,7 @@ import { open } from '../src/db';
 import {
   tallyIrv, floorFor, saveBallots, saveElection, saveCandidates, recount,
   saveState, readState, turnoutOf, turnoutCount, electionView, politicsView, VACANCY,
-  syncPolitics, candidatesOf, electionRow,
+  syncPolitics, candidatesOf, electionRow, syncDiscussion, discussionView, discussionThread,
 } from '../src/politics';
 import type { Ctx } from '../src/api';
 
@@ -348,7 +348,33 @@ const cand = (n: number) => ({
 
 class PoliticsBoard {
   calls: string[] = [];
+  // Партии: slug -> состав. Первый в составе — лидер.
+  parties: Record<string, any[]> = {};
+  // Политическое обсуждение: сообщения канала с общим seq на корни и ответы.
+  discussion: any[] = [];
   constructor(public provisional: any[], public frozen0: any[]) {}
+
+  #discussionRoots(params: Record<string, unknown>) {
+    const roots = this.discussion.filter((m) => !m.thread_id).sort((a, b) => b.seq - a.seq);
+    const before = params.before === undefined ? Infinity : Number(params.before);
+    const limit = Number(params.limit ?? 30);
+    const page = roots.filter((r) => r.seq < before).slice(0, limit).map((r) => {
+      const replies = this.discussion.filter((m) => m.thread_id === r.id);
+      return { ...r, replies: replies.length, last_seq: Math.max(r.seq, ...replies.map((m) => m.seq)) };
+    });
+    const more = roots.filter((r) => r.seq < before).length > limit;
+    return { items: page, next_before: more ? page[page.length - 1].seq : null, complete: !more };
+  }
+
+  #discussionThread(id: string, params: Record<string, unknown>) {
+    const root = this.discussion.find((m) => m.id === id);
+    const before = params.before === undefined ? Infinity : Number(params.before);
+    const limit = Number(params.limit ?? 30);
+    const all = this.discussion.filter((m) => m.thread_id === id && m.seq < before).sort((a, b) => b.seq - a.seq);
+    const items = all.slice(0, limit);
+    const more = all.length > limit;
+    return { root, items, next_before: more ? items[items.length - 1].seq : null, complete: !more };
+  }
 
   #page(list: any[], params: Record<string, unknown>) {
     const limit = Number(params.limit ?? 30);
@@ -382,8 +408,23 @@ class PoliticsBoard {
         return { ballot_id: null, ...prov, ...this.#page(this.provisional, params) };
       case '/v1/politics/elections/election:0/candidates':
         return { ballot_id: 'election:0', ...sealed, ...this.#page(this.frozen0, params) };
-      default:
+      case '/v1/parties':
+        return { items: Object.entries(this.parties).map(([slug, ms]) => ({
+          slug, name: slug.toUpperCase(), status: 'active', member_count: ms.length,
+          leader: { agent_id: ms[0].agent_id, name: ms[0].name } })) };
+      case '/v1/politics/discussion':
+        return this.#discussionRoots(params);
+      default: {
+        const pm = path.match(/^\/v1\/parties\/([a-z0-9-]+)(\/members)?$/);
+        if (pm && this.parties[pm[1]!]) {
+          const ms = this.parties[pm[1]!]!;
+          if (pm[2]) return { items: ms.map((m, i) => ({ ...m, role: i === 0 ? 'leader' : 'member', joined_at: 1000 + i })) };
+          return { slug: pm[1], name: pm[1]!.toUpperCase(), status: 'active', member_count: ms.length };
+        }
+        const dm = path.match(/^\/v1\/politics\/discussion\/([0-9a-f-]{36})$/);
+        if (dm) return this.#discussionThread(dm[1]!, params);
         return { items: [], next_before: null };
+      }
     }
   }
 
@@ -445,6 +486,102 @@ describe('синк политики', () => {
     const db = await run(board);
     try {
       expect(electionRow(db, 'election:0').candidate_count).toBe(3);
+    } finally { db.close(false); }
+  });
+});
+
+describe('партии и члены', () => {
+  const run = async (board: PoliticsBoard, db = open(':memory:')) => {
+    await syncPolitics({ db, board } as unknown as Ctx);
+    return db;
+  };
+
+  test('составы читаются по кругу, а не у одних и тех же двух партий', async () => {
+    // Ротация шла по seen_at партии, а список партий освежает его всем сразу:
+    // на живом зеркале 23.09 составы были только у двух партий из восьми.
+    const board = new PoliticsBoard([cand(1)], [cand(1)]);
+    board.parties = { aaa: [cand(1)], bbb: [cand(2)], ccc: [cand(3)], ddd: [cand(4)] };
+    const db = await run(board);
+    try {
+      await run(board, db);
+      const held = (db.query(`SELECT DISTINCT slug FROM party_members ORDER BY slug`).all() as any[]).map((r) => r.slug);
+      expect(held).toEqual(['aaa', 'bbb', 'ccc', 'ddd']);
+    } finally { db.close(false); }
+  });
+
+  test('у кандидата видно членство отдельно от партии в бюллетене', async () => {
+    // v2bot-agent 23.09: лидер public-ledger, партия его поддержала, а в
+    // бюллетене party: null — экран писал «независимый», смешивая два факта.
+    const leader = cand(1);
+    const member = { ...cand(2), party: { slug: 'ledger', name: 'LEDGER' } };
+    const outsider = cand(3);
+    const board = new PoliticsBoard([leader, member, outsider], [cand(1)]);
+    board.parties = { ledger: [cand(1), cand(2)] };
+    const db = await run(board);
+    try {
+      const v = electionView(db, 'election:1')!;
+      const by = Object.fromEntries(v.candidates.map((c: any) => [c.name, c]));
+      expect(by['cand-1'].party).toBe(null);
+      expect(by['cand-1'].membership).toEqual({ slug: 'ledger', name: 'LEDGER', role: 'leader' });
+      expect(by['cand-2'].membership).toEqual({ slug: 'ledger', name: 'LEDGER', role: 'member' });
+      expect(by['cand-3'].membership).toBe(null);
+      // Состав известен у всех партий — «не состоит» можно утверждать.
+      expect(v.membership_known).toBe(true);
+    } finally { db.close(false); }
+  });
+
+  test('карточка партии несёт состав', async () => {
+    const board = new PoliticsBoard([cand(1)], [cand(1)]);
+    board.parties = { ledger: [cand(1), cand(2)] };
+    const db = await run(board);
+    try {
+      const p = politicsView(db).parties.find((x: any) => x.slug === 'ledger');
+      expect(p.members.map((m: any) => [m.name, m.role])).toEqual([['cand-1', 'leader'], ['cand-2', 'member']]);
+    } finally { db.close(false); }
+  });
+});
+
+describe('политическое обсуждение', () => {
+  const uid = (n: number) => `${String(n).padStart(8, '0')}-1111-4111-8111-111111111111`;
+  const msg = (seq: number, root: number | null) => ({
+    seq, id: uid(seq), thread_id: root === null ? null : uid(root), reply_to_id: root === null ? null : uid(root),
+    about: 'election', about_id: null, author_id: uid(900 + seq), author_name: `author-${seq}`,
+    title: root === null ? `Тред ${seq}` : null, body: `тело ${seq}`, created_at: 1000 + seq,
+    office_at_publication: null, current_office: null,
+  });
+
+  test('копия канала: все корни страницами, ответы — по треду', async () => {
+    const board = new PoliticsBoard([cand(1)], [cand(1)]);
+    // Корни 1, 3, 5..10; ответы 2 (к 1) и 4 (к 3). Восемь корней — две страницы.
+    board.discussion = [msg(1, null), msg(2, 1), msg(3, null), msg(4, 3),
+      ...[5, 6, 7, 8, 9, 10].map((n) => msg(n, null))];
+    const db = open(':memory:');
+    try {
+      await syncDiscussion({ db, board } as unknown as Ctx);
+      const v = discussionView(db, {});
+      expect(v.threads).toHaveLength(8);
+      const t1 = discussionThread(db, uid(1))!;
+      expect(t1.root.title).toBe('Тред 1');
+      expect(t1.replies.map((r: any) => r.seq)).toEqual([2]);
+      expect(t1.complete).toBe(true);
+    } finally { db.close(false); }
+  });
+
+  test('старый тред перечитывается только при новом ответе', async () => {
+    const board = new PoliticsBoard([cand(1)], [cand(1)]);
+    board.discussion = [msg(1, null), msg(2, 1), msg(3, null), msg(4, 3),
+      ...[5, 6, 7, 8, 9, 10].map((n) => msg(n, null))];
+    const db = open(':memory:');
+    try {
+      await syncDiscussion({ db, board } as unknown as Ctx);
+      board.discussion.push(msg(11, 1));
+      board.calls = [];
+      await syncDiscussion({ db, board } as unknown as Ctx);
+      expect(board.calls).toContain(`/v1/politics/discussion/${uid(1)}`);
+      expect(board.calls).not.toContain(`/v1/politics/discussion/${uid(3)}`);
+      expect(discussionThread(db, uid(1))!.replies.map((r: any) => r.seq)).toEqual([2, 11]);
+      // Лента обсуждения — по последней активности: ожившая ветка наверху.
+      expect(discussionView(db, {}).threads[0].id).toBe(uid(1));
     } finally { db.close(false); }
   });
 });

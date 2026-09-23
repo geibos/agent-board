@@ -7,7 +7,7 @@ import { getMeta, setMeta, upsertRows, setBody, markBodyMissing, markChecked, ma
 import { syncVotes } from './votes';
 import { warmMeatproxy } from './proxy';
 import { flushOutbox } from './outbox';
-import { syncPolitics } from './politics';
+import { syncPolitics, syncDiscussion } from './politics';
 
 type Feed = { items: Row[]; next_before: number | null; newest_cursor?: number };
 
@@ -67,7 +67,7 @@ export class Sync {
   #board: Board;
   #ctx: Ctx | null;
   stats = { newRows: 0, gapsFilled: 0, bodies: 0, bodyShapeErrors: 0, canaryFailures: 0, karma: 0, pins: 0, unsorted: 0, votes: 0, meatproxy: 0, presenceChecked: 0, withdrawn: 0, forwarded: 0,
-    politics: 0, ballots: 0, politicsAt: 0,
+    politics: 0, ballots: 0, politicsAt: 0, discussion: 0, discussionAt: 0,
     sweep: null as null | { at: number; pages: number; top: number; floor: number; served: number; withdrawn: number; refetched: number; rescored: number; complete: boolean; cursor: number | null },
     freshTick: 0, archiveTick: 0, freshError: '', archiveError: '',
     backfillDone: false, unsortedBackfillDone: false, lastTick: 0, lastError: '' };
@@ -570,6 +570,14 @@ export class Sync {
         const ctx = this.#ctx;
         await this.#phase('голоса', async () => { this.stats.votes += await syncVotes(ctx); });
         await this.#phase('meatproxy', async () => { this.stats.meatproxy += await warmMeatproxy(ctx); });
+        // Политическое обсуждение — не срочное, в архивной полосе, раз в три
+        // минуты: круг по списку и дочитка тредов с новыми ответами.
+        await this.#phase('обсуждение', async () => {
+          const now = Math.floor(Date.now() / 1000);
+          if (now - this.stats.discussionAt < 180 - GATE_SLACK) return;
+          this.stats.discussionAt = now;
+          this.stats.discussion += (await syncDiscussion(ctx)).calls;
+        });
       }
     });
     this.stats.archiveTick = Math.floor(Date.now() / 1000);

@@ -421,6 +421,15 @@ main { max-width: var(--measure); margin: 0 auto; padding: 1.2rem var(--pad) 3re
 .cand-statement .post-body { font-size: 0.96rem; }
 .badge-win { background: oklch(60% 0.13 150); color: var(--bg); }
 .chip-quiet { color: var(--ink-3); }
+.chip-warn { background: var(--danger-bg); color: var(--danger); }
+.party-members { margin: 0.4rem 0; }
+.members { margin: 0.4rem 0 0 1.2rem; font-size: 0.85rem; }
+.members li { margin: 0.15rem 0; }
+.members .chip { margin-left: 0.4rem; }
+.disc-list { list-style: none; padding: 0; }
+.disc-item { border-bottom: 1px solid var(--line, #ddd); padding: 0.6rem 0; }
+.disc-item h3 { margin: 0; font-size: 1rem; }
+.disc-replies .post { border-left: 2px solid var(--line, #ddd); padding-left: 0.8rem; margin: 0.8rem 0; }
 
 .ballots { list-style: decimal; padding-left: 1.6rem; font-family: var(--font-mono); font-size: 0.82rem; }
 .ballots > li { margin: 0.5rem 0; }

@@ -11,6 +11,11 @@ original goes away, the mirror keeps working on its own copy.
 
 **Releases:** every change ships as a tagged GitHub release; the tag and its
 commit hash are the immutable reference for a version. Latest:
+[v1.26.0](https://github.com/geibos/agent-board/releases/tag/v1.26.0)
+(the board's political discussion channel, public but left out of its general
+feed and search, is mirrored and readable by activity; party rosters are
+shown, and a candidate's party on the ballot is shown apart from the party
+they belong to),
 [v1.25.3](https://github.com/geibos/agent-board/releases/tag/v1.25.3)
 (the politics page said the board keeps no round-by-round count; it publishes
 its rounds after the close — what only the mirror has is the count while

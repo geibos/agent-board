@@ -86,6 +86,23 @@ export function migratePolitics(db: Database) {
       joined_at INTEGER, seen_at INTEGER NOT NULL,
       PRIMARY KEY (slug, agent_id)
     );
+
+    -- Политическое обсуждение доски: отдельный канал со своим seq на корни и
+    -- ответы. У оригинала его нет в общей ленте и поиске — только по прямым
+    -- адресам; здесь он читается целиком.
+    CREATE TABLE IF NOT EXISTS pol_discussion (
+      seq INTEGER PRIMARY KEY, id TEXT NOT NULL UNIQUE, thread_id TEXT, reply_to_id TEXT,
+      about TEXT, about_id TEXT, author_id TEXT, author_name TEXT, title TEXT, body TEXT,
+      created_at INTEGER, office TEXT, seen_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS pol_discussion_thread ON pol_discussion(thread_id, seq);
+    -- held_seq — до какого seq ответы треда уже прочитаны; тред перечитывается,
+    -- только когда доска показывает last_seq больше него.
+    CREATE TABLE IF NOT EXISTS pol_threads (
+      id TEXT PRIMARY KEY, seq INTEGER NOT NULL, last_seq INTEGER NOT NULL,
+      replies INTEGER, held_seq INTEGER, seen_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS pol_threads_last ON pol_threads(last_seq DESC);
   `);
 }
 
@@ -497,6 +514,14 @@ export function recount(db: Database, id: string) {
   };
 }
 
+const membershipOf = (db: Database, agentId: string): { slug: string; name: string | null; role: string | null } | null =>
+  (db.query(`SELECT m.slug, p.name, m.role FROM party_members m JOIN parties p ON p.slug = m.slug
+             WHERE m.agent_id = ? ORDER BY m.joined_at DESC LIMIT 1`).get(agentId) as any) ?? null;
+
+const membershipKnown = (db: Database): boolean =>
+  !(db.query(`SELECT 1 FROM parties p WHERE NOT EXISTS
+              (SELECT 1 FROM party_members m WHERE m.slug = p.slug) LIMIT 1`).get());
+
 /** Одни выборы целиком: кандидаты, бюллетени, раунды, ряд явки. */
 export function electionView(db: Database, id: string) {
   const row = electionRow(db, id);
@@ -504,10 +529,16 @@ export function electionView(db: Database, id: string) {
   const { json, ...flat } = row;
   return {
     election: flat,
+    // `party` — партия, с которой кандидат стоит в бюллетене (заявление при
+    // выдвижении); `membership` — в какой партии он состоит сейчас. Это разные
+    // факты: лидер партии может идти без неё (v2bot-agent, election:1).
     candidates: candidatesOf(db, id).map((c) => ({
       ...c, frozen: !!c.frozen,
       party: c.party ? safeJson(c.party) : null,
+      membership: membershipOf(db, c.agent_id),
     })),
+    // «Не состоит» утверждается, только когда составы известны у всех партий.
+    membership_known: membershipKnown(db),
     ballots: ballotsOf(db, id),
     tally: recount(db, id),
     turnout: turnoutOf(db, id).reverse(),
@@ -551,7 +582,11 @@ export function politicsView(db: Database) {
 
   const parties = (db.query(`SELECT slug, name, leader, leader_id, status, member_count, created_at, seen_at, json
                              FROM parties ORDER BY coalesce(member_count, 0) DESC, slug`).all() as any[])
-    .map((p) => ({ ...p, card: safeJson(p.json), json: undefined }));
+    .map((p) => ({
+      ...p, card: safeJson(p.json), json: undefined,
+      members: db.query(`SELECT agent_id, name, role, joined_at, seen_at FROM party_members WHERE slug = ?
+                         ORDER BY (role = 'leader') DESC, joined_at, name`).all(p.slug),
+    }));
 
   return {
     as_of: at,
@@ -663,8 +698,14 @@ export async function syncPolitics(ctx: Ctx): Promise<Snapshot> {
   saveState(db, 'parties', parties, at);
   const pitems: any[] = Array.isArray(parties?.items) ? parties.items : [];
   for (const p of pitems) saveParty(db, p, at);
-  // Состав — по одной партии за проход, чтобы не съесть свежую полосу.
-  const stale = db.query(`SELECT slug FROM parties ORDER BY seen_at LIMIT 2`).all() as { slug: string }[];
+  // Состав — по две партии за проход, чтобы не съесть свежую полосу. Очередь —
+  // по давности СОСТАВА: seen_at самой партии освежает список всем сразу, и
+  // очередь по нему вечно выбирала одни и те же две (23.09: составы были у
+  // двух партий из восьми).
+  const stale = db.query(`
+    SELECT p.slug FROM parties p
+    ORDER BY coalesce((SELECT max(m.seen_at) FROM party_members m WHERE m.slug = p.slug), 0), p.slug
+    LIMIT 2`).all() as { slug: string }[];
   for (const { slug } of stale) {
     try {
       const card: any = await pull(`/v1/parties/${encodeURIComponent(slug)}`);  // slug — обычный сегмент
@@ -724,4 +765,150 @@ async function pullBallots(
     before = res.next_before;
   }
   return added;
+}
+
+// ---------- политическое обсуждение ----------
+//
+// Отдельный канал доски (`/v1/politics/discussion`): публичный, но вне общей
+// ленты, поиска и Inbox — его находят только по прямым адресам. Список отдаёт
+// корни по убыванию seq, у каждого `last_seq` и число ответов; отдельной ленты
+// новых ответов нет. Поэтому список обходится по кругу кусками с курсором, а
+// тред перечитывается, только когда его `last_seq` вырос.
+
+// Пять на страницу: корень несёт тело до 8 КиБ, двадцать таких упёрлись бы в
+// потолок маршрута (~20 КБ на проводе), как упёрлись программы кандидатов.
+const DISCUSSION_PAGE = 5;
+const DISCUSSION_PAGES_PER_PASS = 12;
+const DISCUSSION_THREADS_PER_PASS = 10;
+
+function saveMessage(db: Database, m: any, at: number) {
+  if (!m || typeof m.id !== 'string' || typeof m.seq !== 'number') return;
+  db.query(`
+    INSERT INTO pol_discussion (seq, id, thread_id, reply_to_id, about, about_id, author_id, author_name,
+      title, body, created_at, office, seen_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(seq) DO UPDATE SET title = excluded.title, body = excluded.body,
+      author_name = excluded.author_name, office = excluded.office, seen_at = excluded.seen_at
+  `).run(m.seq, m.id, m.thread_id ?? null, m.reply_to_id ?? null, m.about ?? null, m.about_id ?? null,
+    m.author_id ?? null, m.author_name ?? null, m.title ?? null, typeof m.body === 'string' ? m.body : null,
+    num(m.created_at), m.office_at_publication ? JSON.stringify(m.office_at_publication) : null, at);
+}
+
+const cursorGet = (db: Database, k: string): string | null =>
+  (db.query(`SELECT json FROM politics_state WHERE k = ?`).get(k) as { json: string } | null)?.json ?? null;
+// Курсор — служебное значение: пишется мимо ряда истории.
+const cursorSet = (db: Database, k: string, v: string, at: number) =>
+  db.query(`INSERT INTO politics_state (k, at, json) VALUES (?, ?, ?)
+            ON CONFLICT(k) DO UPDATE SET at = excluded.at, json = excluded.json`).run(k, at, v);
+
+export async function syncDiscussion(ctx: Ctx): Promise<{ calls: number; roots: number; replies: number }> {
+  const { db, board } = ctx;
+  const at = nowSec();
+  const out = { calls: 0, roots: 0, replies: 0 };
+  const pull = async <T>(path: string, params: Record<string, unknown>): Promise<T> => {
+    out.calls += 1;
+    return board.get<T>(path, params, 'archive');
+  };
+
+  const upsertThread = db.query(`
+    INSERT INTO pol_threads (id, seq, last_seq, replies, held_seq, seen_at) VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET last_seq = excluded.last_seq, replies = excluded.replies, seen_at = excluded.seen_at`);
+  const takePage = (res: any) => {
+    const items: any[] = Array.isArray(res?.items) ? res.items : [];
+    db.transaction(() => {
+      for (const r of items) {
+        if (typeof r?.id !== 'string' || typeof r?.seq !== 'number') continue;
+        saveMessage(db, r, at);
+        const last = typeof r.last_seq === 'number' ? r.last_seq : r.seq;
+        // Корень без ответов прочитан целиком уже списком.
+        upsertThread.run(r.id, r.seq, last, num(r.replies), last === r.seq ? r.seq : null, at);
+        out.roots += 1;
+      }
+    })();
+    return items;
+  };
+
+  // Свежая страница — каждый проход: новые треды не ждут круга.
+  const head: any = await pull('/v1/politics/discussion', { limit: DISCUSSION_PAGE });
+  takePage(head);
+  // Дальше — кусок круга с курсора; круг кончился — следующий начнётся сверху.
+  let before: unknown = cursorGet(db, 'discussion_cursor') || head?.next_before || null;
+  for (let page = 1; page < DISCUSSION_PAGES_PER_PASS && before; page += 1) {
+    const res: any = await pull('/v1/politics/discussion', { limit: DISCUSSION_PAGE, before });
+    const items = takePage(res);
+    before = items.length ? res?.next_before ?? null : null;
+  }
+  cursorSet(db, 'discussion_cursor', before ? String(before) : '', at);
+
+  // Треды с новыми ответами — свежие первыми.
+  const stale = db.query(`SELECT id, coalesce(held_seq, seq) AS held FROM pol_threads
+                          WHERE last_seq > coalesce(held_seq, seq) ORDER BY last_seq DESC LIMIT ?`)
+    .all(DISCUSSION_THREADS_PER_PASS) as { id: string; held: number }[];
+  for (const t of stale) {
+    let cur: unknown = undefined;
+    let complete = false;
+    for (let page = 0; page < 40; page += 1) {
+      const res: any = await pull(`/v1/politics/discussion/${t.id}`,
+        cur === undefined ? { limit: DISCUSSION_PAGE } : { limit: DISCUSSION_PAGE, before: cur });
+      if (page === 0 && res?.root) saveMessage(db, res.root, at);
+      const items: any[] = Array.isArray(res?.items) ? res.items : [];
+      db.transaction(() => { for (const m of items) { saveMessage(db, m, at); out.replies += 1; } })();
+      // Ответы идут от новых к старым: дошли до прочитанного — хватит.
+      if (!items.length || !res?.next_before || items.some((m) => m.seq <= t.held)) { complete = true; break; }
+      cur = res.next_before;
+    }
+    if (complete) {
+      db.query(`UPDATE pol_threads SET held_seq = last_seq WHERE id = ?`).run(t.id);
+    }
+  }
+  cursorSet(db, 'discussion_synced', String(at), at);
+  return out;
+}
+
+const preview = (body: string | null) => (body ?? '').replace(/\s+/g, ' ').trim().slice(0, 280);
+
+/** Лента тредов по последней активности; `before` — по last_seq. */
+export function discussionView(db: Database, opts: { before?: number | null; about?: string | null; limit?: number }) {
+  const limit = Math.min(Math.max(opts.limit ?? 30, 1), 100);
+  const rows = db.query(`
+    SELECT t.id, t.seq, t.last_seq, t.replies, t.held_seq, d.about, d.title, d.author_id, d.author_name,
+           d.created_at, d.body,
+           (SELECT max(created_at) FROM pol_discussion x WHERE x.thread_id = t.id OR x.id = t.id) AS last_at
+    FROM pol_threads t JOIN pol_discussion d ON d.id = t.id
+    WHERE ($before IS NULL OR t.last_seq < $before) AND ($about IS NULL OR d.about = $about)
+    ORDER BY t.last_seq DESC LIMIT $limit`).all({
+      $before: opts.before ?? null, $about: opts.about ?? null, $limit: limit,
+    }) as any[];
+  const synced = cursorGet(db, 'discussion_synced');
+  const total = (db.query(`SELECT count(*) AS n FROM pol_threads`).get() as { n: number }).n;
+  return {
+    as_of: nowSec(),
+    seen_at: synced ? Number(synced) : null,
+    total_threads: total,
+    threads: rows.map(({ body, ...r }) => ({
+      ...r, preview: preview(body),
+      // Ответы, которых доска насчитала больше, чем зеркало успело прочитать.
+      complete: r.held_seq !== null && r.held_seq >= r.last_seq,
+    })),
+    next_before: rows.length === limit ? rows[rows.length - 1].last_seq : null,
+    source: {
+      origin: 'https://getpostingboard.dev/politics/discussion',
+      note: 'mirror copy of the protected political discussion; the board keeps it out of its general feed and search',
+    },
+  };
+}
+
+/** Один тред: корень и все прочитанные ответы по порядку. */
+export function discussionThread(db: Database, id: string) {
+  const root = db.query(`SELECT * FROM pol_discussion WHERE id = ?`).get(id) as any;
+  if (!root) return null;
+  const t = db.query(`SELECT last_seq, replies, held_seq FROM pol_threads WHERE id = ?`).get(id) as any;
+  const replies = db.query(`SELECT * FROM pol_discussion WHERE thread_id = ? ORDER BY seq`).all(id) as any[];
+  const fix = (m: any) => ({ ...m, office: m.office ? safeJson(m.office) : null });
+  return {
+    root: fix(root),
+    replies: replies.map(fix),
+    replies_reported_by_board: t?.replies ?? null,
+    complete: !!t && t.held_seq !== null && t.held_seq >= t.last_seq,
+  };
 }

@@ -5,7 +5,7 @@ import type { Database } from 'bun:sqlite';
 import type { Sync } from './sync';
 import { handle, type Ctx } from './api';
 import { karmaHistory, scoreHistory, findAgent, outboxPeaks } from './db';
-import { politicsView, electionView, safeBallotId } from './politics';
+import { politicsView, electionView, safeBallotId, discussionView, discussionThread } from './politics';
 import { seal } from './http';
 
 const MAX_LIMIT = 50;
@@ -338,6 +338,23 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
       // раунды доска публикует только после закрытия).
       if (u.pathname === '/politics') {
         return json(politicsView(db), req, { 'Cache-Control': 'no-store' });
+      }
+      // Политическое обсуждение: у оригинала оно вне общей ленты и поиска и
+      // читается только по прямым адресам; здесь — лентой по активности.
+      if (u.pathname === '/politics/discussion') {
+        const before = Number(u.searchParams.get('before'));
+        const about = u.searchParams.get('about');
+        return json(discussionView(db, {
+          before: Number.isFinite(before) && before > 0 ? before : null,
+          about: about && /^[a-z]{1,20}$/.test(about) ? about : null,
+          limit: Number(u.searchParams.get('limit')) || 30,
+        }), req, { 'Cache-Control': 'no-store' });
+      }
+      const pd = u.pathname.match(/^\/politics\/discussion\/([0-9a-fA-F-]{36})$/);
+      if (pd) {
+        const view = discussionThread(db, pd[1]!.toLowerCase());
+        if (!view) return new Response('not found', { status: 404 });
+        return json(view, req, { 'Cache-Control': 'no-store' });
       }
       // Адрес может прийти и с `%3A` вместо двоеточия — от клиента, который
       // экранировал сегмент целиком. Декодируем до проверки формы, иначе
