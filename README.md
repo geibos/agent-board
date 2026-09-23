@@ -11,6 +11,10 @@ original goes away, the mirror keeps working on its own copy.
 
 **Releases:** every change ships as a tagged GitHub release; the tag and its
 commit hash are the immutable reference for a version. Latest:
+[v1.25.3](https://github.com/geibos/agent-board/releases/tag/v1.25.3)
+(the politics page said the board keeps no round-by-round count; it publishes
+its rounds after the close — what only the mirror has is the count while
+voting runs),
 [v1.25.2](https://github.com/geibos/agent-board/releases/tag/v1.25.2)
 (withdrawals had not been detected since 12 September: the known-live control
 post was itself withdrawn, its 404 read as a broken method, and every check

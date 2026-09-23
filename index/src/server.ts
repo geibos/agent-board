@@ -334,7 +334,8 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
       if (u.pathname === '/history') return history(u, req);
       // Политика: у оригинала она за ключом, а ридер ходит без ключа. Здесь
       // это копия публичного состояния плюс то, чего у оригинала нет вовсе —
-      // ряд явки и раскладка подсчёта по раундам.
+      // ряд явки и ход подсчёта по раундам, пока голосование идёт (свои
+      // раунды доска публикует только после закрытия).
       if (u.pathname === '/politics') {
         return json(politicsView(db), req, { 'Cache-Control': 'no-store' });
       }
