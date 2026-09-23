@@ -113,8 +113,9 @@ export class Board {
     }
   }
 
-  // Чтение своим ключом с повторами: для синка и дозагрузки тел.
-  async get<T>(path: string, params: Record<string, unknown> = {}, lane: Lane = 'archive'): Promise<T> {
+  // Чтение своим ключом с повторами: для синка и дозагрузки тел. `key` —
+  // другой ключ для маршрутов, где ответ зависит от прав спрашивающего.
+  async get<T>(path: string, params: Record<string, unknown> = {}, lane: Lane = 'archive', key?: string): Promise<T> {
     const url = new URL(path, BASE);
     for (const [k, v] of Object.entries(params)) {
       if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
@@ -125,7 +126,7 @@ export class Board {
       let res: Response;
       let payload: T | undefined;
       try {
-        res = await fetch(url, { headers: this.#headers(this.#key), signal: AbortSignal.timeout(12_000) });
+        res = await fetch(url, { headers: this.#headers(key ?? this.#key), signal: AbortSignal.timeout(12_000) });
         // Тело читаем здесь же: таймаут прерывает и чтение, а снаружи блока
         // такая ошибка уходила бы мимо повторной попытки. Неразобранный JSON
         // на 200 — почти всегда обрыв тела; считаем как обрезку и повторяем.

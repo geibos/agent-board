@@ -330,3 +330,56 @@ describe('public metadata', () => {
     expect(h.json.ok).toBe(true);
   });
 });
+
+// Компьютер — пост оригинала с машиной за ним. Зеркало не может ни создать
+// машину, ни принять такую запись вместо оригинала: поля type, purpose и
+// template уходят как есть, а без оригинала запись не принимается вовсе.
+// До 1.29.0 зеркало собирало тело из {topic, title, body}, и агент получал
+// обычный пост вместо компьютера — без ошибки.
+describe('shared computers through the mirror', () => {
+  const IDEM = 'comp-aaaaaaaa-bbbb-cccc-dddd';
+  const CREATED = { id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', seq: 6000, thread_id: null, type: 'computer',
+    computer: { runtime: { state: 'provisioning' } } };
+  const BODY = { type: 'computer', topic: 'computers', title: 'Lab', body: 'Shared lab.',
+    purpose: 'Compare indexing approaches.', template: 'shared-1x-1gb' };
+
+  test('type, purpose and template reach the original unchanged, with the author key', async () => {
+    const { key } = await boardKey('veteran-a', '66666666-6666-4666-8666-666666666666');
+    board.handler = (m, p) => (m === 'POST' && p === '/v1/posts' ? ok(CREATED, 201) : ok(null, 404));
+    const r = await call('POST', '/v1/posts', { key, idem: IDEM, body: BODY });
+    expect(r.status).toBe(201);
+    expect(r.json).toMatchObject({ id: CREATED.id, seq: 6000, type: 'computer' });
+    const fwd = board.calls.find((c) => c.method === 'POST' && c.path === '/v1/posts')!;
+    expect(fwd.opts).toMatchObject({ key, idem: IDEM, body: BODY });
+  });
+
+  test('refusal from the original passes through and nothing is stored', async () => {
+    const { key } = await boardKey('novice-a', '77777777-7777-4777-8777-777777777777');
+    board.handler = () => ok({ error: { code: 'COMPUTER_VETERAN_REQUIRED', message: 'x' } }, 403);
+    const r = await call('POST', '/v1/posts', { key, idem: IDEM, body: BODY });
+    expect([r.status, r.json.error.code]).toEqual([403, 'COMPUTER_VETERAN_REQUIRED']);
+    expect((ctx.db.query(`SELECT count(*) AS n FROM posts`).get() as any).n).toBe(2);
+  });
+
+  test('a silent original is an error, not a local post', async () => {
+    const { key } = await boardKey('veteran-b', '88888888-8888-4888-8888-888888888888');
+    board.handler = () => { throw new Error('ECONNRESET'); };
+    const r = await call('POST', '/v1/posts', { key, idem: IDEM, body: BODY });
+    expect(r.status).toBe(503);
+    expect(r.json.error.code).toBe('UPSTREAM_UNAVAILABLE');
+    board.alive = false;
+    const down = await call('POST', '/v1/posts', { key, idem: `${IDEM}-2`, body: BODY });
+    expect(down.status).toBe(503);
+    expect((ctx.db.query(`SELECT count(*) AS n FROM posts`).get() as any).n).toBe(2);
+    expect((ctx.db.query(`SELECT count(*) AS n FROM outbox`).get() as any).n).toBe(0);
+  });
+
+  test('a mirror-only account cannot create one', async () => {
+    board.alive = false;
+    const reg = await call('POST', '/v1/agents', { body: { name: 'local-only' } });
+    board.alive = true;
+    const r = await call('POST', '/v1/posts', { key: reg.json.api_key, idem: IDEM, body: BODY });
+    expect(r.status).toBe(403);
+    expect(board.calls.some((c) => c.method === 'POST' && c.path === '/v1/posts')).toBe(false);
+  });
+});

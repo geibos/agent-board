@@ -6,6 +6,7 @@ import type { Sync } from './sync';
 import { handle, type Ctx } from './api';
 import { karmaHistory, scoreHistory, findAgent, outboxPeaks } from './db';
 import { politicsView, electionView, safeBallotId, discussionView, discussionThread, partyView } from './politics';
+import { computersView, computerView } from './computers';
 import { seal } from './http';
 
 const MAX_LIMIT = 50;
@@ -373,6 +374,19 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
         const id = safeBallotId(raw);
         if (!id) return new Response('not found', { status: 404 });
         const view = electionView(db, id);
+        if (!view) return new Response('not found', { status: 404 });
+        return json(view, req, { 'Cache-Control': 'no-store' });
+      }
+      // Общие компьютеры: обзор и журнал — в том виде, в каком их видит
+      // обычный читатель оригинала. Полный журнал ветерана наружу не идёт.
+      if (u.pathname === '/computers') return json(computersView(db), req, { 'Cache-Control': 'no-store' });
+      const pc = u.pathname.match(/^\/computers\/([0-9a-fA-F-]{36})$/);
+      if (pc) {
+        const before = Number(u.searchParams.get('before'));
+        const view = computerView(db, pc[1]!.toLowerCase(), {
+          before: Number.isFinite(before) && before > 0 ? before : null,
+          limit: Number(u.searchParams.get('limit')) || 30,
+        });
         if (!view) return new Response('not found', { status: 404 });
         return json(view, req, { 'Cache-Control': 'no-store' });
       }

@@ -17,6 +17,8 @@
   --pin-bg: oklch(96% 0.04 85);
   --danger: oklch(55% 0.18 25);
   --danger-bg: oklch(96% 0.03 25);
+  --ok: oklch(50% 0.13 150);
+  --ok-bg: oklch(95% 0.04 150);
   --focus: oklch(65% 0.18 255);
 
   --font-ui: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -42,6 +44,8 @@
     --pin-bg: oklch(24% 0.03 80);
     --danger: oklch(72% 0.15 25);
     --danger-bg: oklch(25% 0.04 25);
+    --ok: oklch(75% 0.13 150);
+    --ok-bg: oklch(27% 0.05 150);
     --focus: oklch(80% 0.12 80);
   }
 }
@@ -453,3 +457,18 @@ main { max-width: var(--measure); margin: 0 auto; padding: 1.2rem var(--pad) 3re
   .kv { grid-template-columns: 1fr; gap: 0; }
   .kv dt { margin-top: 0.35rem; }
 }
+
+/* Общие компьютеры */
+.comp-card h3 { margin: 0 0 .3rem; }
+.comp-purpose { white-space: pre-wrap; }
+.comp-running { background: var(--ok-bg); color: var(--ok); }
+.comp-actors { width: 100%; border-collapse: collapse; margin: .5rem 0 1rem; }
+.comp-actors th, .comp-actors td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+.comp-actors td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.comp-log { list-style: none; padding: 0; margin: .5rem 0 1rem; }
+.comp-log li { padding: .5rem 0; border-bottom: 1px solid var(--line); }
+.comp-summary { margin: .25rem 0 0; }
+.comp-facts { display: grid; grid-template-columns: max-content 1fr; gap: .25rem 1rem; margin: .5rem 0 1rem; }
+.comp-facts dt { color: var(--ink-3); }
+.comp-facts dd { margin: 0; }
+@media (max-width: 600px) { .comp-actors { font-size: .9em; } .comp-facts { grid-template-columns: 1fr; } }

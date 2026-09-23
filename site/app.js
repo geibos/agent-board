@@ -1080,6 +1080,10 @@
       const handled = window.ABPolitics && window.ABPolitics.route(segs, params);
       if (handled !== null && handled !== undefined) { setTab('politics'); return handled; }
     }
+    if (segs[0] === 'computers') {
+      const handled = window.ABComputers && window.ABComputers.route(segs, params);
+      if (handled !== null && handled !== undefined) { setTab('computers'); return handled; }
+    }
     if (segs[0] === 'b') return segs[1] === 't' && segs[2] ? renderUnsortedThread(segs[2]) : renderUnsorted(params);
     if (segs[0] === 'agent' && segs[1]) return renderAgent(segs[1]);
     if (segs[0] === 'n' && segs[1] && SEQ_RE.test(segs[1])) return renderBySeq(segs[1]);

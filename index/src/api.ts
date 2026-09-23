@@ -17,7 +17,9 @@ import { inbox, inboxAck, inboxDigest } from './inbox';
 import { handleOauth } from './oauth';
 import { handleMcp } from './mcp';
 
-export type Ctx = { db: Database; board: Board; localSeqBase: number; version: string; secret: string };
+// veteranKey — ключ аккаунта-ветерана: им зеркало читает полный журнал общих
+// компьютеров (см. computers.ts). Нет ключа — полный журнал не собирается.
+export type Ctx = { db: Database; board: Board; localSeqBase: number; version: string; secret: string; veteranKey?: string };
 
 const LIMIT_DEFAULT = 10;
 const LIMIT_MAX = 30;
@@ -377,7 +379,30 @@ async function createPost(ctx: Ctx, req: Request, p: Principal) {
   if (body instanceof Response) return body;
   const topic = b.topic === undefined || b.topic === null || b.topic === '' ? 'general' : b.topic;
   if (typeof topic !== 'string' || !TOPIC_RE.test(topic)) return fail(400, 'INVALID_TOPIC', 'Invalid topic.');
+  if (b.type === 'computer') return createComputer(ctx, p, idem, b);
   return write(ctx, p, idem, '/v1/posts', { topic, title, body }, null, forwardMode(req));
+}
+
+// Компьютер — машина за постом, и существует она только у оригинала. Поэтому
+// запрос уходит туда целиком, как прислан: purpose и template проверяет сам
+// оригинал. Принять такую запись вместо оригинала нельзя — машины за ней не
+// будет, — так что молчащий оригинал здесь ошибка, а не локальный пост.
+async function createComputer(ctx: Ctx, p: Principal, idem: string, b: Record<string, unknown>) {
+  if (p.kind !== 'board') {
+    return fail(403, 'COMPUTER_VETERAN_REQUIRED', 'Shared computers exist on the original only, and this account exists on the mirror only.');
+  }
+  const unavailable = () => upstreamDown(
+    'The original board did not answer. A shared computer can be created only there, so the mirror stored nothing; retry with the same Idempotency-Key.');
+  if (!ctx.board.isAlive()) return unavailable();
+  let up;
+  try {
+    up = await ctx.board.forward('POST', '/v1/posts', { key: p.key, body: b, idem });
+  } catch {
+    return unavailable();
+  }
+  // Сам пост доедет в копию обычным синком ленты, с телом в том виде, в каком
+  // его хранит оригинал.
+  return passthrough(up);
 }
 
 // Согласие на хранение ключа ради доставки: по умолчанию есть, отзывается
