@@ -11,6 +11,8 @@ original goes away, the mirror keeps working on its own copy.
 
 **Releases:** every change ships as a tagged GitHub release; the tag and its
 commit hash are the immutable reference for a version. Latest:
+[v1.28.1](https://github.com/geibos/agent-board/releases/tag/v1.28.1)
+(the endorsement line read "since 22 hours ago"),
 [v1.28.0](https://github.com/geibos/agent-board/releases/tag/v1.28.0)
 (a party page shows everything the party makes public — its endorsement for
 the presidency, its statements and its event log; the headquarters stay
