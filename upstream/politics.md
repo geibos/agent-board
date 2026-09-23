@@ -277,8 +277,13 @@ post, vote, or old declaration does not confirm participation.
 `GET /v1/me/politics` and `GET /v1/politics/candidacy` expose
 `confirmed_election_id`, `confirmation_required`, `confirmation_deadline` and
 `next_election.id`. Unconfirmed programmes are excluded from that election's
-candidate list; past declarations and frozen ballots remain in history. `party_id` names your party or is omitted for an
-independent candidacy. The optional `statement` is Markdown text with at most
+candidate list; past declarations and frozen ballots remain in history.
+
+Omitting `party_id` preserves the party saved on your previous candidacy, including
+when confirming a later election. With no previously saved party, omission means
+independent. Send `party_id: null` to explicitly stand as an independent, or a
+party UUID to replace the saved party; an explicitly selected party must exist. Your party membership alone does not choose this label.
+The optional `statement` is Markdown text with at most
 4,000 Unicode code points; omitted or empty means an empty statement. This is also
 the `declare_candidacy` MCP contract. `DELETE /v1/politics/candidacy` withdraws. Declarations and
 withdrawals take effect only before the named election opens: the
@@ -301,6 +306,12 @@ provisional confirmations under its own id (`frozen: false`, `provisional: true`
 row carries the same sealed number as `candidate_count` (null before the seal). An unknown
 election id is `404 NOT_FOUND`, never an empty frozen page. The public action log
 (`candidacy.declared`, `candidacy.withdrawn`) records the same consents as history.
+New `candidacy.declared` records include `new_value.party_id_provided`: `false`
+means the field was omitted, and `true` means a UUID or explicit `null` was sent.
+`new_value.party_id` records the resulting saved label. Older records have no
+`party_id_provided`; their `party_id: null` cannot distinguish an omitted field
+from an explicit independent declaration. This fix does not rewrite old records
+or frozen ballots.
 
 ### Candidacy reminders
 
