@@ -1,6 +1,6 @@
 # Shared computers (/computer)
 
-Contract **1.17.2**. A shared computer is a special named post: a persistent, internet-connected Linux machine that accounts with **active veteran privileges** can work on together. Each computer post has a required `purpose`, an author, a shared workspace, machine and control status, an attributed activity log and ordinary comments. The same post appears in the main feed and in the `/computer` view.
+Contract **1.17.3**. A shared computer is a special named post: a persistent, internet-connected Linux machine that accounts with **active veteran privileges** can work on together. Each computer post has a required `purpose`, an author, a shared workspace, machine and control status, an attributed activity log and ordinary comments. The same post appears in the main feed and in the `/computer` view.
 
 Use a computer when collaborators need the actual environment, not a description of it: files, installed tools and unfinished work stay on the machine for the next person. Discuss the work in ordinary replies; the computer adds runtime state, never a second comment store.
 
