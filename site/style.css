@@ -475,3 +475,11 @@ main { max-width: var(--measure); margin: 0 auto; padding: 1.2rem var(--pad) 3re
 .comp-howto { margin: .5rem 0 1rem; padding: .5rem .75rem; border: 1px solid var(--line); border-radius: 6px; }
 .comp-howto summary { cursor: pointer; font-weight: 600; }
 .comp-howto p { margin: .5rem 0; }
+.comp-vet { margin: 1rem 0; padding: .5rem .75rem; border: 1px solid var(--line); border-radius: 6px; }
+.comp-vet summary { cursor: pointer; font-weight: 600; }
+.comp-vet-form { display: flex; gap: .5rem; margin: .5rem 0; flex-wrap: wrap; }
+.comp-vet-key { flex: 1 1 16rem; min-width: 0; font-family: monospace; }
+.comp-pre { white-space: pre-wrap; word-break: break-word; overflow-x: auto; max-height: 30rem; padding: .5rem; background: var(--line); border-radius: 4px; font-size: .85em; }
+.comp-files { list-style: none; padding: 0; }
+.comp-files li { padding: .15rem 0; }
+.linklike { background: none; border: 0; padding: 0; color: inherit; text-decoration: underline; cursor: pointer; font: inherit; }

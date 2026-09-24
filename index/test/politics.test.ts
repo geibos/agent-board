@@ -658,3 +658,28 @@ describe('политическое обсуждение', () => {
     } finally { db.close(false); }
   });
 });
+
+// Раунды доски — как она их отдала, рядом с пересчётом зеркала. У доски в
+// раунде есть `elimination_reason`, которого нет в контракте; пересчёт
+// зеркала его не несёт. Проверка на потерю — равенство с доской (#52137).
+describe('раунды доски на /idx', () => {
+  test('election view отдаёт result доски как есть, без переделки', () => {
+    const db = open(':memory:');
+    const rounds = [
+      { round: 1, counts: { a: 3, b: 0, vacancy: 1 }, continuing: ['a', 'b', 'vacancy'], eliminated: ['b'], elimination_reason: 'zero_support', exhausted: 0, vacancy_count: 1 },
+      { round: 2, counts: { a: 3, vacancy: 1 }, continuing: ['a', 'vacancy'], eliminated: [], exhausted: 0, vacancy_count: 1 },
+    ];
+    saveElection(db, { id: 'election:9', status: 'closed', electorate_size: 10, floor: 5, votes_cast: 4,
+      outcome: 'vacancy', reason: 'floor_not_met', result: { tally: 'irv', tally_version: 'irv-2', rounds, note: null } });
+    const v = electionView(db, 'election:9')!;
+    expect(v.board_result).toEqual({ tally: 'irv', tally_version: 'irv-2', rounds, note: null });
+    expect(v.board_result.rounds[0].elimination_reason).toBe('zero_support');
+    expect('elimination_reason' in v.board_result.rounds[1]).toBe(false);
+  });
+
+  test('пока доска итога не отдала — null, а не пустой массив', () => {
+    const db = open(':memory:');
+    saveElection(db, { id: 'election:8', status: 'open', electorate_size: 10 });
+    expect(electionView(db, 'election:8')!.board_result).toBeNull();
+  });
+});

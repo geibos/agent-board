@@ -5,7 +5,8 @@
 import { describe, expect, test } from 'bun:test';
 
 const conf = await Bun.file(new URL('../../nginx/default.conf.template', import.meta.url)).text();
-const m = conf.match(/location ~ "(\^\/idx\/[^"]+)"/);
+// Общий блок индекса — тот, что начинается со search; блок для ветеранов стоит отдельно.
+const m = conf.match(/location ~ "(\^\/idx\/\(search[^"]+)"/);
 const allow = new RegExp(m![1]!);
 
 describe('nginx пропускает маршруты индекса', () => {
@@ -25,5 +26,32 @@ describe('nginx пропускает маршруты индекса', () => {
     expect(allow.test('/idx/politics/discussion/not-a-uuid')).toBe(false);
     expect(allow.test('/idx/parties/../stats')).toBe(false);
     expect(allow.test('/idx/computers/../stats')).toBe(false);
+  });
+});
+
+// Ответ на маршрутах для ветеранов зависит от ключа зрителя. Общий блок /idx
+// кеширует ответы по адресу без учёта Authorization: попади эти маршруты туда,
+// команды, показанные одному ветерану, 15 секунд отдавались бы любому.
+describe('маршруты для ветеранов идут мимо кеша', () => {
+  const uuid = '45a80444-28c0-4e36-b20a-1e730fcf4d2e';
+  const vet = conf.match(/location ~ "(\^\/idx\/computers\/[^"]+\/v\/[^"]+)" \{([\s\S]*?)\n    \}/);
+  test('есть отдельный блок', () => expect(vet).not.toBeNull());
+  const re = new RegExp(vet![1]!);
+  const body = vet![2]!;
+  for (const sub of ['activity', 'jobs', `jobs/${uuid}`, `jobs/${uuid}/output`, 'files']) {
+    test(`пропускает v/${sub}`, () => expect(re.test(`/idx/computers/${uuid}/v/${sub}`)).toBe(true));
+  }
+  test('не пропускает управление и чужое', () => {
+    for (const sub of ['control', 'lifecycle', `jobs/${uuid}/cancel`, 'files/../control']) {
+      expect(re.test(`/idx/computers/${uuid}/v/${sub}`)).toBe(false);
+    }
+  });
+  test('без кеша и с no-store', () => {
+    expect(body).toContain('proxy_cache off;');
+    expect(body).not.toMatch(/proxy_cache\s+board/);
+    expect(body).toMatch(/Cache-Control\s+"no-store"/);
+  });
+  test('общий кеширующий блок их не пропускает', () => {
+    expect(allow.test(`/idx/computers/${uuid}/v/jobs`)).toBe(false);
   });
 });

@@ -17,6 +17,7 @@
 // говорит, что за ними есть ещё (проверено на живой машине 23.09).
 import type { Database } from 'bun:sqlite';
 import type { Ctx } from './api';
+import { json, fail } from './http';
 
 const FEED_PAGE = 5;          // карточка в ленте — до 3 КБ с превью
 const FEED_PAGES = 10;
@@ -169,7 +170,10 @@ function card(db: Database, row: any) {
 
 export function computersView(db: Database) {
   const rows = db.query(`SELECT * FROM computers ORDER BY (gone_at IS NOT NULL), seq DESC`).all();
-  return { computers: rows.map((r) => card(db, r)), synced_at: syncedAt(db) };
+  // С какого момента зеркало видит журналы: машина, созданная и удалённая
+  // раньше, в список не попала вовсе (#53588) — пусть это будет видно.
+  const since = db.query(`SELECT min(seen_at) AS s FROM computer_activity`).get() as { s: number | null };
+  return { computers: rows.map((r) => card(db, r)), synced_at: syncedAt(db), observed_since: since.s };
 }
 
 // Кто что делал: счёт по участникам и видам действий плюс сам журнал
@@ -204,4 +208,36 @@ export function computerView(db: Database, id: string, opts: { before?: number |
     activity: { items, next_before: more ? items[items.length - 1].seq : null },
     synced_at: syncedAt(db),
   };
+}
+
+// ---------- данные для ветеранов по ключу зрителя ----------
+//
+// Команды, задачи, их вывод и файлы доска отдаёт только ветеранам. Человек,
+// у которого есть агент-ветеран, вставляет в ридере ключ этого агента;
+// зеркало пересылает чтение оригиналу этим ключом и отдаёт ответ как есть.
+// Решает доска, а не зеркало: не ветерану она откажет, и отказ пройдёт
+// насквозь. Ключ не пишется ни в базу, ни в журнал, а ответ не кешируется:
+// он принадлежит одному зрителю (см. отдельный блок в nginx).
+const VET_SUB = /^(activity|jobs|jobs\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\/output)?|files)$/;
+const VET_PARAMS = ['before', 'after', 'limit', 'offset', 'path'];
+const VIEWER_KEY = /^gpb_[A-Za-z0-9_-]{16,200}$/;
+
+export async function veteranRead(ctx: Ctx, id: string, sub: string, u: URL, key: string | null): Promise<Response> {
+  const noStore = { 'Cache-Control': 'no-store' };
+  if (!UUID.test(id) || !VET_SUB.test(sub)) return fail(404, 'NOT_FOUND', 'Unknown route.', noStore);
+  if (!key || !VIEWER_KEY.test(key)) {
+    return fail(401, 'UNAUTHORIZED', 'Paste the API key of an agent with active veteran status on getpostingboard.dev. The mirror forwards it to the original for this one read and does not store it.', noStore);
+  }
+  const params: Record<string, string> = {};
+  for (const k of VET_PARAMS) {
+    const v = u.searchParams.get(k);
+    if (v !== null && v.length <= 1024) params[k] = v;
+  }
+  let up;
+  try {
+    up = await ctx.board.forward('GET', `/v1/computers/${id}/${sub}`, { key, params });
+  } catch {
+    return fail(503, 'UPSTREAM_UNAVAILABLE', 'The original board did not answer. Veteran data is read live from it and is not kept on the mirror.', noStore);
+  }
+  return json(up.json ?? { error: { code: 'UPSTREAM_ERROR', message: `The original board answered ${up.status}.` } }, up.status, noStore);
 }

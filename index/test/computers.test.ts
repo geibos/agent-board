@@ -113,6 +113,7 @@ describe('общие компьютеры', () => {
     const detailCalls = board.calls.filter((c) => c.path === `/v1/computers/${A}`);
     expect(detailCalls.every((c) => c.key === READER)).toBe(true);
     expect(JSON.stringify(v)).not.toContain('"eligible":true');
+    expect(v.observed_since).toBeGreaterThan(0);
   });
 
   test('журнал «кто что делал»: публично — без команд, полный — только в своей таблице', async () => {
@@ -175,5 +176,73 @@ describe('общие компьютеры', () => {
 
   test('неизвестная машина — null', () => {
     expect(computerView(db, B, {})).toBeNull();
+    expect(computersView(db).observed_since).toBeNull();
+  });
+});
+
+// Чтение для ветеранов: зритель вставляет ключ своего агента, зеркало
+// пересылает запрос оригиналу этим ключом и ничего не хранит. Решает доска:
+// ветерану она отдаёт команды, задачи, вывод и файлы, остальным — отказ.
+import { veteranRead } from '../src/computers';
+
+describe('данные для ветеранов по ключу зрителя', () => {
+  const KEY = 'gpb_viewerKey_0123456789abcdef';
+  type Fwd = { method: string; path: string; opts: any };
+  const fwd: Fwd[] = [];
+  let answer: (path: string) => { status: number; json: any } = () => ({ status: 200, json: { items: [] } });
+  const vctx = () => ({ db, localSeqBase: 100000, version: 't', secret: 's',
+    board: { forward: async (method: string, path: string, opts: any) => { fwd.push({ method, path, opts }); return { ...answer(path), headers: new Headers() }; } } as any });
+  const call = (sub: string, key: string | null, qs = '') =>
+    veteranRead(vctx(), A, sub, new URL(`http://m/computers/${A}/v/${sub}${qs}`), key);
+  beforeEach(() => { fwd.length = 0; answer = () => ({ status: 200, json: { items: [{ command: 'bash run.sh' }] } }); });
+
+  test('без ключа и с ключом не той формы — 401, оригиналу ничего не уходит', async () => {
+    for (const k of [null, '', 'not-a-key', 'gpb_short', 'gpb_ok0123456789abcdef x']) {
+      const r = await call('jobs', k);
+      expect(r.status).toBe(401);
+    }
+    expect(fwd).toHaveLength(0);
+  });
+
+  test('ключ уходит оригиналу на тот же маршрут, только разрешённые параметры, ответ без кеша', async () => {
+    const r = await call('jobs', KEY, '?limit=20&before=5&evil=1&path=x');
+    expect(r.status).toBe(200);
+    expect(r.headers.get('cache-control')).toBe('no-store');
+    expect(await r.json()).toMatchObject({ items: [{ command: 'bash run.sh' }] });
+    expect(fwd).toEqual([{ method: 'GET', path: `/v1/computers/${A}/jobs`, opts: expect.objectContaining({ key: KEY }) }]);
+    expect(fwd[0]!.opts.params).toEqual({ limit: '20', before: '5', path: 'x' });
+    const j = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    await call(`jobs/${j}/output`, KEY, '?offset=300&limit=65536');
+    expect(fwd[1]!.path).toBe(`/v1/computers/${A}/jobs/${j}/output`);
+  });
+
+  test('отказ доски проходит насквозь: не ветеран — не ветеран', async () => {
+    answer = () => ({ status: 403, json: { error: { code: 'COMPUTER_VETERAN_REQUIRED', message: 'x' } } });
+    const r = await call('activity', KEY);
+    expect(r.status).toBe(403);
+    expect((await r.json()).error.code).toBe('COMPUTER_VETERAN_REQUIRED');
+  });
+
+  test('маршруты вне списка не пересылаются', async () => {
+    for (const sub of ['control', 'lifecycle', 'files/../control', 'jobs/not-a-uuid', 'jobs/x/cancel']) {
+      const r = await call(sub, KEY);
+      expect(r.status).toBe(404);
+    }
+    expect(fwd).toHaveLength(0);
+  });
+
+  test('оригинал молчит — 503, а не пустой ответ', async () => {
+    const r = await veteranRead({ ...vctx(), board: { forward: async () => { throw new Error('ECONNRESET'); } } as any },
+      A, 'jobs', new URL(`http://m/x`), KEY);
+    expect(r.status).toBe(503);
+  });
+
+  test('ключ зрителя нигде не остаётся', async () => {
+    await call('jobs', KEY);
+    const tables = (db.query(`SELECT name FROM sqlite_master WHERE type = 'table'`).all() as { name: string }[]).map((t) => t.name);
+    for (const t of tables) {
+      const rows = db.query(`SELECT * FROM "${t}"`).all();
+      expect(JSON.stringify(rows)).not.toContain(KEY);
+    }
   });
 });

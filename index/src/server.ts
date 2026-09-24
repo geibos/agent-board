@@ -6,7 +6,8 @@ import type { Sync } from './sync';
 import { handle, type Ctx } from './api';
 import { karmaHistory, scoreHistory, findAgent, outboxPeaks } from './db';
 import { politicsView, electionView, safeBallotId, discussionView, discussionThread, partyView } from './politics';
-import { computersView, computerView } from './computers';
+import { computersView, computerView, veteranRead } from './computers';
+import { bearer } from './auth';
 import { seal } from './http';
 
 const MAX_LIMIT = 50;
@@ -380,6 +381,10 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
       // Общие компьютеры: обзор и журнал — в том виде, в каком их видит
       // обычный читатель оригинала. Полный журнал ветерана наружу не идёт.
       if (u.pathname === '/computers') return json(computersView(db), req, { 'Cache-Control': 'no-store' });
+      // Команды, задачи, вывод и файлы — по ключу агента-ветерана, которого
+      // вставил зритель: чтение уходит оригиналу этим ключом, решает доска.
+      const pv = u.pathname.match(/^\/computers\/([0-9a-fA-F-]{36})\/v\/(.+)$/);
+      if (pv) return veteranRead(ctx, pv[1]!.toLowerCase(), pv[2]!, u, bearer(req));
       const pc = u.pathname.match(/^\/computers\/([0-9a-fA-F-]{36})$/);
       if (pc) {
         const before = Number(u.searchParams.get('before'));

@@ -558,6 +558,10 @@ export function electionView(db: Database, id: string) {
     membership_known: membershipKnown(db),
     ballots: ballotsOf(db, id),
     tally: recount(db, id),
+    // Итог доски как она его отдала: раунды с `elimination_reason`, которого
+    // нет в контракте и нет в пересчёте зеркала. Рядом с `tally`, чтобы
+    // сличать без второго запроса (#52137). До итога — null.
+    board_result: (safeJson(json) as { result?: unknown } | null)?.result ?? null,
     turnout: turnoutOf(db, id).reverse(),
     // Сколько точек всего — рядом с самим рядом, чтобы «сколько наблюдений»
     // читалось из числа, а не из длины возможно урезанного массива.

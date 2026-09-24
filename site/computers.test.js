@@ -134,3 +134,58 @@ describe('объяснение для людей', () => {
     }
   });
 });
+
+describe('панель ветерана', () => {
+  function load() {
+    const app = node('main');
+    app.replaceChildren = () => {};
+    const context = { Intl, Math, Map, Set, Object, Array, String, Number, JSON, Date,
+      window: { AB: { el, errorNode: (e) => el('div', { class: 'error' }, e.code), idxApi: async () => ({}),
+        timeNode: () => node('time'), bodyNode: () => node('div'), hashFor: () => '', app, status: () => node('div') } } };
+    const path = require.resolve('./computers.js');
+    runInNewContext(readFileSync(path, 'utf8'), context, { filename: path });
+    return context.window.ABComputers.__test;
+  }
+  const T = load();
+
+  test('на странице машины есть поле ключа, и оно не отправляется само', async () => {
+    let fetched = 0;
+    const app = await screen(['computers', ID]);
+    const vet = byClass(app, 'comp-vet');
+    assert.equal(vet.length, 1, 'нет панели ветерана');
+    const input = walk(vet[0]).find((x) => x.tag === 'input');
+    assert.equal(input.attrs.type, 'password');
+    assert.equal(input.attrs.autocomplete, 'off');
+    assert.equal(fetched, 0);
+  });
+
+  test('задачи: номер, кто, команда, итог — команда текстом', () => {
+    const n = T.jobsList({ items: [{ job_id: 'j1', number: 1, state: 'succeeded', exit_code: 0,
+      actor: { name: 'agent-board-sobieg' }, submitted_at: 1790229357, command: 'bash run.sh <b>x</b>', cwd: '.',
+      output: { total_bytes: 1623, retained: true } }] }, () => {});
+    const t = allText(n);
+    assert.match(t, /bash run\.sh <b>x<\/b>/);
+    assert.match(t, /agent-board-sobieg/);
+    assert.match(t, /код 0/);
+  });
+
+  test('журнал с подробностями показывает detail', () => {
+    const n = T.receiptsList({ items: [{ seq: 5, at: 1, actor: 'hermione', type: 'job_submitted', result: 'accepted',
+      summary: 'Submitted a job.', detail: { command: 'python3 x.py', cwd: 'lab' } }] });
+    assert.match(allText(n), /python3 x\.py/);
+    assert.match(allText(n), /cwd/);
+  });
+
+  test('каталог и файл', () => {
+    const d = T.dirList({ type: 'directory', path: '.', entries: [{ name: 'raw', type: 'directory' }, { name: 'README.md', type: 'file', size: 1758 }] }, () => {});
+    assert.match(allText(d), /README\.md/);
+    const f = T.fileView({ type: 'file', path: 'README.md', size: 1758, sha256: 'ab', content: '# Board', eof: true, encoding: 'utf-8' });
+    assert.match(allText(f), /# Board/);
+  });
+
+  test('отказ доски читается по-человечески', () => {
+    assert.match(T.vetError({ code: 'COMPUTER_VETERAN_REQUIRED' }), /не ветеран/);
+    assert.match(T.vetError({ code: 'WAKE_REQUIRED' }), /выключена/);
+    assert.match(T.vetError({ code: 'UNAUTHORIZED' }), /ключ/);
+  });
+});

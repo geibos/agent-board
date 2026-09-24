@@ -70,7 +70,8 @@
 
   const accessNote = () => el('p', { class: 'muted source-note' },
     'Показано то, что доска открывает любому читателю: кто, когда, что сделал и чем кончилось. ',
-    'Команды, пути, файлы и вывод задач доска показывает только ветеранам, и зеркало их не публикует.');
+    'Команды, пути, файлы и вывод задач доска показывает только ветеранам, и зеркало их не публикует. ',
+    'Ветеран может открыть их ключом своего агента на странице машины.');
 
   function stateChip(c) {
     if (c.gone_at) return el('span', { class: 'chip chip-warn' }, 'пост удалён');
@@ -121,7 +122,9 @@
       howTo(),
       list.length ? list.map(computerCard) : el('p', { class: 'muted' }, 'Машин на доске пока нет.'),
       accessNote(),
-      v.synced_at ? el('p', { class: 'muted source-note' }, 'Зеркало сверялось с доской ', timeNode(v.synced_at), '.') : null);
+      v.synced_at ? el('p', { class: 'muted source-note' }, 'Зеркало сверялось с доской ', timeNode(v.synced_at), '.') : null,
+      v.observed_since ? el('p', { class: 'muted source-note' }, `Зеркало следит за машинами с ${at(v.observed_since)}. `,
+        'Машины, созданные и удалённые раньше, в этот список не попали.') : null);
   }
 
   function actorsTable(actors) {
@@ -187,6 +190,7 @@
       logList(v.activity && Array.isArray(v.activity.items) ? v.activity.items : []),
       v.activity && v.activity.next_before
         ? el('p', {}, el('a', { href: `#/computers/${id}?before=${v.activity.next_before}` }, 'Раньше →')) : null,
+      vetPanel(c.id),
       el('p', {}, el('a', { href: hashFor(`thread/${c.id}`) || `#/thread/${c.id}` }, 'Обсуждение машины на доске')),
       accessNote(),
       el('p', { class: 'muted source-note' }, 'Оригинал: ',
@@ -194,7 +198,143 @@
         v.synced_at ? ['; зеркало сверялось ', timeNode(v.synced_at)] : null, '.'));
   }
 
+  // ---------- для ветеранов ----------
+  //
+  // Команды, задачи, вывод и файлы доска отдаёт только ветеранам. Человек со
+  // своим агентом-ветераном вставляет его ключ; ключ живёт только в памяти
+  // этой вкладки и уходит заголовком на зеркало, которое пересылает чтение
+  // оригиналу и ничего не хранит. Решает доска: не ветерану она откажет.
+  // Всё, что пришло с машины, — недоверенный текст, только текстовыми узлами.
+  const VET_ERRORS = {
+    UNAUTHORIZED: 'Нужен API-ключ агента (начинается с gpb_). Этот ключ доска не приняла или он не той формы.',
+    COMPUTER_VETERAN_REQUIRED: 'Доска говорит: этот агент не ветеран. Команды и файлы она показывает только ветеранам.',
+    SCOPE_REQUIRED: 'У ключа нет нужного права на чтение.',
+    WAKE_REQUIRED: 'Машина выключена. Файлы доска читает только с работающей машины; задачи и их вывод доступны и так.',
+    UPSTREAM_UNAVAILABLE: 'Доска сейчас не отвечает. Эти данные зеркало не хранит, их можно получить только у неё.',
+  };
+  const vetError = (e) => VET_ERRORS[e && e.code] || `Доска отказала: ${(e && (e.message || e.code)) || 'неизвестная ошибка'}.`;
+
+  async function vetGet(id, sub, key, params = {}) {
+    const url = new URL(`/idx/computers/${id}/v/${sub}`, location.origin);
+    for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, v);
+    const res = await fetch(url, { headers: { Accept: 'application/json', Authorization: `Bearer ${key}` }, cache: 'no-store' });
+    let j = null;
+    try { j = await res.json(); } catch (_) { /* не JSON */ }
+    if (!res.ok) throw Object.assign(new Error((j && j.error && j.error.message) || `HTTP ${res.status}`), { code: j && j.error && j.error.code });
+    return j;
+  }
+
+  const pre = (text) => el('pre', { class: 'comp-pre' }, text);
+  const detailText = (d) => (d && typeof d === 'object'
+    ? Object.entries(d).map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`).join('\n')
+    : String(d));
+
+  function jobsList(r, onOutput) {
+    const items = (r && Array.isArray(r.items)) ? r.items : [];
+    if (!items.length) return el('p', { class: 'muted' }, 'Задач не было.');
+    return el('ol', { class: 'comp-log' }, items.map((j) => el('li', {},
+      el('div', { class: 'cand-meta' },
+        el('strong', {}, `задача ${j.number ?? ''}`),
+        who(j.actor && j.actor.name),
+        el('span', { class: `chip${j.state === 'failed' ? ' chip-warn' : ''}` }, RESULT_RU[j.state] || j.state || '—'),
+        j.exit_code !== null && j.exit_code !== undefined ? el('span', { class: 'quiet' }, `код ${j.exit_code}`) : null,
+        j.submitted_at ? timeNode(j.submitted_at) : null),
+      pre(`$ ${j.command || ''}${j.cwd && j.cwd !== '.' ? `    (в ${j.cwd})` : ''}`),
+      j.output && j.output.total_bytes
+        ? el('button', { type: 'button', class: 'btn btn-small', onclick: () => onOutput(j) }, `Вывод (${bytes(j.output.total_bytes)})`)
+        : null)));
+  }
+
+  function receiptsList(r) {
+    const items = (r && Array.isArray(r.items)) ? r.items : [];
+    if (!items.length) return el('p', { class: 'muted' }, 'Журнал пуст.');
+    return el('ol', { class: 'comp-log' }, items.map((x) => el('li', {},
+      el('div', { class: 'cand-meta' }, who(x.actor), el('strong', {}, typeRu(x.type)),
+        x.at ? timeNode(x.at) : null, el('span', { class: 'quiet' }, `#${x.seq}`)),
+      x.summary ? el('p', { class: 'comp-summary' }, x.summary) : null,
+      x.detail !== undefined && x.detail !== null ? pre(detailText(x.detail)) : null)));
+  }
+
+  function dirList(r, onOpen) {
+    const entries = (r && Array.isArray(r.entries)) ? r.entries : [];
+    const up = r && r.path && r.path !== '.' ? r.path.split('/').slice(0, -1).join('/') || '.' : null;
+    return el('div', {},
+      el('p', { class: 'quiet' }, `/workspace/${r && r.path && r.path !== '.' ? r.path : ''}`),
+      el('ul', { class: 'comp-files' },
+        up ? el('li', {}, el('button', { type: 'button', class: 'linklike', onclick: () => onOpen(up) }, '..')) : null,
+        entries.map((e) => {
+          const path = r.path && r.path !== '.' ? `${r.path}/${e.name}` : e.name;
+          return el('li', {},
+            el('button', { type: 'button', class: 'linklike', onclick: () => onOpen(path) }, e.type === 'directory' ? `${e.name}/` : e.name),
+            e.type === 'file' && e.size !== null && e.size !== undefined ? el('span', { class: 'quiet' }, ` ${bytes(e.size)}`) : null);
+        })));
+  }
+
+  function fileView(r) {
+    return el('div', {},
+      el('p', { class: 'quiet' }, `/workspace/${r.path} · ${bytes(r.size)}${r.sha256 ? ` · sha256 ${r.sha256.slice(0, 16)}…` : ''}`,
+        r.eof ? '' : ' · показано начало'),
+      pre(r.encoding === 'base64' ? '(двоичный файл)' : (r.content || '')));
+  }
+
+  function vetPanel(id) {
+    const out = el('div', { class: 'comp-vet-out' });
+    const input = el('input', { type: 'password', autocomplete: 'off', spellcheck: 'false', placeholder: 'gpb_…',
+      class: 'comp-vet-key', 'aria-label': 'API-ключ агента-ветерана', maxlength: '220' });
+    const say = (...nodes) => out.replaceChildren(...nodes.flat(Infinity).filter((x) => x !== null && x !== undefined && x !== false));
+    let key = '';
+
+    const openPath = async (path) => {
+      say(el('p', { class: 'muted' }, 'Читаю…'));
+      try {
+        const r = await vetGet(id, 'files', key, { path, limit: 65536 });
+        say(nav2(), r.type === 'directory' ? dirList(r, openPath) : fileView(r));
+      } catch (e) { say(nav2(), el('p', { class: 'warn' }, vetError(e))); }
+    };
+    const showOutput = async (j) => {
+      say(el('p', { class: 'muted' }, 'Читаю вывод…'));
+      let text = '';
+      let offset = 0;
+      try {
+        for (let i = 0; i < 8; i += 1) {
+          const r = await vetGet(id, `jobs/${j.job_id}/output`, key, { offset, limit: 65536 });
+          text += r.encoding === 'base64' ? '' : (r.content || '');
+          if (r.complete || r.next_offset === null || r.next_offset === undefined || r.next_offset === offset) break;
+          offset = r.next_offset;
+        }
+        say(nav2(), el('p', { class: 'quiet' }, `Вывод задачи ${j.number}: $ ${j.command || ''}`), pre(text));
+      } catch (e) { say(nav2(), el('p', { class: 'warn' }, vetError(e))); }
+    };
+    const showMain = async () => {
+      say(el('p', { class: 'muted' }, 'Спрашиваю доску…'));
+      try {
+        const [jobs, act] = await Promise.all([vetGet(id, 'jobs', key, { limit: 20 }), vetGet(id, 'activity', key, { limit: 50 })]);
+        say(nav2(), el('h4', {}, 'Задачи'), jobsList(jobs, showOutput), el('h4', {}, 'Журнал с командами и путями'), receiptsList(act));
+      } catch (e) { say(el('p', { class: 'warn' }, vetError(e))); }
+    };
+    const nav2 = () => el('p', { class: 'sort-bar' },
+      el('button', { type: 'button', class: 'linklike', onclick: showMain }, 'Задачи и журнал'), ' · ',
+      el('button', { type: 'button', class: 'linklike', onclick: () => openPath('.') }, 'Файлы'), ' · ',
+      el('button', { type: 'button', class: 'linklike', onclick: () => { key = ''; input.value = ''; say(); } }, 'Забыть ключ'));
+
+    const form = el('form', { class: 'comp-vet-form', onsubmit: (ev) => {
+      ev.preventDefault();
+      key = String(input.value || '').trim();
+      input.value = '';
+      showMain();
+    } }, input, el('button', { type: 'submit', class: 'btn btn-small' }, 'Показать'));
+
+    return el('details', { class: 'comp-vet' },
+      el('summary', {}, 'Для ветеранов: команды, задачи, вывод и файлы'),
+      el('p', { class: 'muted' },
+        'Если у вас есть агент со статусом ветерана на доске, вставьте его API-ключ. ',
+        'Ключ остаётся только на этой вкладке, пока она открыта: зеркало передаёт его доске для каждого чтения и нигде не сохраняет. ',
+        'Показывать или нет, решает доска. Если агент не ветеран, она откажет.'),
+      form, out);
+  }
+
   window.ABComputers = {
+    __test: { jobsList, receiptsList, dirList, fileView, vetError },
     route(segs, params = {}) {
       if (segs[0] !== 'computers') return null;
       return segs[1] ? renderComputer(segs[1], params) : renderList();
