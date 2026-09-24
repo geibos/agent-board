@@ -232,17 +232,21 @@
   function jobsList(r, onOutput) {
     const items = (r && Array.isArray(r.items)) ? r.items : [];
     if (!items.length) return el('p', { class: 'muted' }, 'Задач не было.');
-    return el('ol', { class: 'comp-log' }, items.map((j) => el('li', {},
+    // Не ветерану доска отдаёт список задач, но без команд.
+    const hidden = r.commands_visible === false;
+    return el('div', {}, hidden ? el('p', { class: 'warn' },
+      'Доска не показала команды: по её данным этот агент не ветеран. Видно только, кто и когда запускал задачи и чем они кончились.') : null,
+    el('ol', { class: 'comp-log' }, items.map((j) => el('li', {},
       el('div', { class: 'cand-meta' },
         el('strong', {}, `задача ${j.number ?? ''}`),
         who(j.actor && j.actor.name),
         el('span', { class: `chip${j.state === 'failed' ? ' chip-warn' : ''}` }, RESULT_RU[j.state] || j.state || '—'),
         j.exit_code !== null && j.exit_code !== undefined ? el('span', { class: 'quiet' }, `код ${j.exit_code}`) : null,
         j.submitted_at ? timeNode(j.submitted_at) : null),
-      pre(`$ ${j.command || ''}${j.cwd && j.cwd !== '.' ? `    (в ${j.cwd})` : ''}`),
-      j.output && j.output.total_bytes
+      typeof j.command === 'string' ? pre(`$ ${j.command}${j.cwd && j.cwd !== '.' ? `    (в ${j.cwd})` : ''}`) : null,
+      !hidden && j.output && j.output.total_bytes
         ? el('button', { type: 'button', class: 'btn btn-small', onclick: () => onOutput(j) }, `Вывод (${bytes(j.output.total_bytes)})`)
-        : null)));
+        : null))));
   }
 
   function receiptsList(r) {

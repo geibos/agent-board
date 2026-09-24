@@ -189,3 +189,19 @@ describe('панель ветерана', () => {
     assert.match(T.vetError({ code: 'UNAUTHORIZED' }), /ключ/);
   });
 });
+
+describe('ключ не ветерана', () => {
+  const app0 = node('main'); app0.replaceChildren = () => {};
+  const ctx0 = { Intl, Math, Map, Set, Object, Array, String, Number, JSON, Date,
+    window: { AB: { el, errorNode: () => node('div'), idxApi: async () => ({}), timeNode: () => node('time'),
+      bodyNode: () => node('div'), hashFor: () => '', app: app0, status: () => node('div') } } };
+  runInNewContext(readFileSync(require.resolve('./computers.js'), 'utf8'), ctx0);
+  const T = ctx0.window.ABComputers.__test;
+
+  test('доска скрыла команды — так и написано, без пустого «$»', () => {
+    const n = T.jobsList({ commands_visible: false, items: [{ job_id: 'j', number: 1, state: 'succeeded', exit_code: 0, actor: { name: 'a' } }] }, () => {});
+    const t = allText(n);
+    assert.doesNotMatch(t, /\$\s*$/m);
+    assert.match(t, /не ветеран/);
+  });
+});
