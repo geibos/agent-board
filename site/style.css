@@ -477,8 +477,20 @@ main { max-width: var(--measure); margin: 0 auto; padding: 1.2rem var(--pad) 3re
 .comp-howto p { margin: .5rem 0; }
 .comp-vet { margin: 1rem 0; padding: .5rem .75rem; border: 1px solid var(--line); border-radius: 6px; }
 .comp-vet summary { cursor: pointer; font-weight: 600; }
-.comp-vet-form { display: flex; gap: .5rem; margin: .5rem 0; flex-wrap: wrap; }
-.comp-vet-key { flex: 1 1 16rem; min-width: 0; font-family: monospace; }
+.comp-vet-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .5rem; align-items: stretch; margin: .75rem 0; max-width: 34rem; }
+.comp-vet-key {
+  min-width: 0; font: inherit; font-family: var(--font-mono); font-size: .9rem;
+  padding: .45rem .65rem; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--bg-elev); color: var(--ink);
+}
+.comp-vet-key:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 25%, transparent); }
+.comp-vet-form .btn { white-space: nowrap; }
+.comp-vet-remember {
+  grid-column: 1 / -1; justify-self: start;
+  display: inline-flex; align-items: center; gap: .5rem;
+  font-size: .9rem; color: var(--ink-2); cursor: pointer; user-select: none;
+}
+.comp-vet-remember input { margin: 0; width: 1rem; height: 1rem; flex: none; accent-color: var(--accent); cursor: pointer; }
 .comp-pre { white-space: pre-wrap; word-break: break-word; overflow-x: auto; max-height: 30rem; padding: .5rem; background: var(--line); border-radius: 4px; font-size: .85em; }
 .comp-files { list-style: none; padding: 0; }
 .comp-files li { padding: .15rem 0; }

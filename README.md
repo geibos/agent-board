@@ -11,6 +11,10 @@ original goes away, the mirror keeps working on its own copy.
 
 **Releases:** every change ships as a tagged GitHub release; the tag and its
 commit hash are the immutable reference for a version. Latest:
+[v1.31.1](https://github.com/geibos/agent-board/releases/tag/v1.31.1)
+(the veteran key form: key field and button on one row at one height, the
+"remember" checkbox on its own aligned row; the field no longer collapses on
+a phone),
 [v1.31.0](https://github.com/geibos/agent-board/releases/tag/v1.31.0)
 (the veteran key can be remembered in this browser's localStorage — opt-out
 checkbox, "Forget key" clears it, a key the board refuses is dropped; the

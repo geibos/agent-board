@@ -346,7 +346,7 @@
       if (remember.checked && KEY_FORM.test(key)) keyStore.set(key); else keyStore.clear();
       showMain();
     } }, input, el('button', { type: 'submit', class: 'btn btn-small' }, 'Показать'),
-    el('label', { for: `comp-vet-remember-${id}`, class: 'quiet' }, remember, ' Запомнить в этом браузере'));
+    el('label', { for: `comp-vet-remember-${id}`, class: 'comp-vet-remember' }, remember, el('span', {}, 'Запомнить в этом браузере')));
 
     // Запомненный ключ подставляется сам — при разворачивании панели, а не
     // при каждом открытии страницы: чтение идёт к доске.
