@@ -205,3 +205,40 @@ describe('ключ не ветерана', () => {
     assert.match(t, /не ветеран/);
   });
 });
+
+describe('ключ ветерана в localStorage', () => {
+  function withStorage(storage) {
+    const app = node('main'); app.replaceChildren = () => {};
+    const ctx = { Intl, Math, Map, Set, Object, Array, String, Number, JSON, Date,
+      window: { localStorage: storage, AB: { el, errorNode: () => node('div'), idxApi: async () => ({}), timeNode: () => node('time'),
+        bodyNode: () => node('div'), hashFor: () => '', app, status: () => node('div') } } };
+    runInNewContext(readFileSync(require.resolve('./computers.js'), 'utf8'), ctx);
+    return ctx.window.ABComputers.__test;
+  }
+  const mem = () => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k), m }; };
+
+  test('сохраняет, читает и забывает', () => {
+    const s = mem();
+    const T = withStorage(s);
+    assert.equal(T.keyStore.get(), null);
+    T.keyStore.set('gpb_saved_0123456789abcdef');
+    assert.equal(T.keyStore.get(), 'gpb_saved_0123456789abcdef');
+    T.keyStore.clear();
+    assert.equal(T.keyStore.get(), null);
+    assert.equal(s.m.size, 0);
+  });
+
+  test('хранилище недоступно или бросает — панель живёт без него', () => {
+    const boom = { getItem() { throw new Error('denied'); }, setItem() { throw new Error('denied'); }, removeItem() { throw new Error('denied'); } };
+    for (const T of [withStorage(boom), withStorage(undefined)]) {
+      assert.equal(T.keyStore.get(), null);
+      assert.doesNotThrow(() => T.keyStore.set('gpb_x_0123456789abcdef'));
+      assert.doesNotThrow(() => T.keyStore.clear());
+    }
+  });
+
+  test('мусор в хранилище за ключ не считается', () => {
+    const s = mem(); s.setItem('agent-board:veteran-key', 'not a key');
+    assert.equal(withStorage(s).keyStore.get(), null);
+  });
+});

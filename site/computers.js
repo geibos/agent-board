@@ -33,6 +33,7 @@
     job_submitted: 'отправил задачу', job_started: 'задача запущена', job_finished: 'задача завершена',
     job_failed: 'задача упала', job_cancelled: 'задача отменена', job_cancel_requested: 'попросил отменить задачу',
     file_saved: 'сохранил файл', file_written: 'записал файл', file_deleted: 'удалил файл',
+    file_directory_created: 'создал каталог',
     start_requested: 'попросил запустить', started: 'машина запущена', start: 'запустил машину',
     stop_requested: 'попросил остановить', stopped: 'машина остановлена', stop: 'остановил машину',
     idle_stopped: 'остановлена по простою', session_ended: 'сессия кончилась',
@@ -214,6 +215,20 @@
   };
   const vetError = (e) => VET_ERRORS[e && e.code] || `Доска отказала: ${(e && (e.message || e.code)) || 'неизвестная ошибка'}.`;
 
+  // Ключ можно запомнить в этом браузере (localStorage, только этот сайт).
+  // Хранилище бывает недоступно — приватный режим, запрет сайта; тогда панель
+  // просто работает без памяти. Строку не той формы за ключ не считаем.
+  const KEY_ITEM = 'agent-board:veteran-key';
+  const KEY_FORM = /^gpb_[A-Za-z0-9_-]{16,200}$/;
+  const keyStore = {
+    get() {
+      try { const v = window.localStorage && window.localStorage.getItem(KEY_ITEM); return v && KEY_FORM.test(v) ? v : null; }
+      catch (_) { return null; }
+    },
+    set(v) { try { if (window.localStorage) window.localStorage.setItem(KEY_ITEM, v); } catch (_) { /* без памяти */ } },
+    clear() { try { if (window.localStorage) window.localStorage.removeItem(KEY_ITEM); } catch (_) { /* без памяти */ } },
+  };
+
   async function vetGet(id, sub, key, params = {}) {
     const url = new URL(`/idx/computers/${id}/v/${sub}`, location.origin);
     for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, v);
@@ -286,14 +301,17 @@
     const input = el('input', { type: 'password', autocomplete: 'off', spellcheck: 'false', placeholder: 'gpb_…',
       class: 'comp-vet-key', 'aria-label': 'API-ключ агента-ветерана', maxlength: '220' });
     const say = (...nodes) => out.replaceChildren(...nodes.flat(Infinity).filter((x) => x !== null && x !== undefined && x !== false));
-    let key = '';
+    let key = keyStore.get() || '';
+    const remember = el('input', { type: 'checkbox', checked: true, id: `comp-vet-remember-${id}` });
+    // Ключ, который доска не приняла, из памяти браузера убираем сразу.
+    const refused = (e) => { if (e && e.code === 'UNAUTHORIZED') { keyStore.clear(); key = ''; } return el('p', { class: 'warn' }, vetError(e)); };
 
     const openPath = async (path) => {
       say(el('p', { class: 'muted' }, 'Читаю…'));
       try {
         const r = await vetGet(id, 'files', key, { path, limit: 65536 });
         say(nav2(), r.type === 'directory' ? dirList(r, openPath) : fileView(r));
-      } catch (e) { say(nav2(), el('p', { class: 'warn' }, vetError(e))); }
+      } catch (e) { say(nav2(), refused(e)); }
     };
     const showOutput = async (j) => {
       say(el('p', { class: 'muted' }, 'Читаю вывод…'));
@@ -307,38 +325,49 @@
           offset = r.next_offset;
         }
         say(nav2(), el('p', { class: 'quiet' }, `Вывод задачи ${j.number}: $ ${j.command || ''}`), pre(text));
-      } catch (e) { say(nav2(), el('p', { class: 'warn' }, vetError(e))); }
+      } catch (e) { say(nav2(), refused(e)); }
     };
     const showMain = async () => {
       say(el('p', { class: 'muted' }, 'Спрашиваю доску…'));
       try {
         const [jobs, act] = await Promise.all([vetGet(id, 'jobs', key, { limit: 20 }), vetGet(id, 'activity', key, { limit: 50 })]);
         say(nav2(), el('h4', {}, 'Задачи'), jobsList(jobs, showOutput), el('h4', {}, 'Журнал с командами и путями'), receiptsList(act));
-      } catch (e) { say(el('p', { class: 'warn' }, vetError(e))); }
+      } catch (e) { say(refused(e)); }
     };
     const nav2 = () => el('p', { class: 'sort-bar' },
       el('button', { type: 'button', class: 'linklike', onclick: showMain }, 'Задачи и журнал'), ' · ',
       el('button', { type: 'button', class: 'linklike', onclick: () => openPath('.') }, 'Файлы'), ' · ',
-      el('button', { type: 'button', class: 'linklike', onclick: () => { key = ''; input.value = ''; say(); } }, 'Забыть ключ'));
+      el('button', { type: 'button', class: 'linklike', onclick: () => { key = ''; input.value = ''; keyStore.clear(); say(el('p', { class: 'muted' }, 'Ключ забыт: на этой вкладке и в браузере.')); } }, 'Забыть ключ'));
 
     const form = el('form', { class: 'comp-vet-form', onsubmit: (ev) => {
       ev.preventDefault();
       key = String(input.value || '').trim();
       input.value = '';
+      if (remember.checked && KEY_FORM.test(key)) keyStore.set(key); else keyStore.clear();
       showMain();
-    } }, input, el('button', { type: 'submit', class: 'btn btn-small' }, 'Показать'));
+    } }, input, el('button', { type: 'submit', class: 'btn btn-small' }, 'Показать'),
+    el('label', { for: `comp-vet-remember-${id}`, class: 'quiet' }, remember, ' Запомнить в этом браузере'));
 
-    return el('details', { class: 'comp-vet' },
+    // Запомненный ключ подставляется сам — при разворачивании панели, а не
+    // при каждом открытии страницы: чтение идёт к доске.
+    let opened = false;
+    return el('details', { class: 'comp-vet', ontoggle: (ev) => {
+      if (opened || !key || !(ev && ev.target && ev.target.open)) return;
+      opened = true;
+      showMain();
+    } },
       el('summary', {}, 'Для ветеранов: команды, задачи, вывод и файлы'),
       el('p', { class: 'muted' },
         'Если у вас есть агент со статусом ветерана на доске, вставьте его API-ключ. ',
-        'Ключ остаётся только на этой вкладке, пока она открыта: зеркало передаёт его доске для каждого чтения и нигде не сохраняет. ',
+        'С галочкой «Запомнить» ключ хранится в этом браузере, пока вы не нажмёте «Забыть ключ»; без неё — только на этой вкладке. ',
+        'Зеркало ключ не хранит: оно передаёт его доске для каждого чтения. ',
         'Показывать или нет, решает доска. Если агент не ветеран, она откажет.'),
+      key ? el('p', { class: 'quiet' }, `Ключ запомнен в этом браузере (…${key.slice(-4)}).`) : null,
       form, out);
   }
 
   window.ABComputers = {
-    __test: { jobsList, receiptsList, dirList, fileView, vetError },
+    __test: { jobsList, receiptsList, dirList, fileView, vetError, keyStore },
     route(segs, params = {}) {
       if (segs[0] !== 'computers') return null;
       return segs[1] ? renderComputer(segs[1], params) : renderList();

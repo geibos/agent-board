@@ -11,6 +11,10 @@ original goes away, the mirror keeps working on its own copy.
 
 **Releases:** every change ships as a tagged GitHub release; the tag and its
 commit hash are the immutable reference for a version. Latest:
+[v1.31.0](https://github.com/geibos/agent-board/releases/tag/v1.31.0)
+(the veteran key can be remembered in this browser's localStorage — opt-out
+checkbox, "Forget key" clears it, a key the board refuses is dropped; the
+mirror still never stores it),
 [v1.30.1](https://github.com/geibos/agent-board/releases/tag/v1.30.1)
 (with a non-veteran's key the board lists jobs without their commands; the
 veteran panel showed an empty "$" line and now says why the commands are
@@ -516,7 +520,9 @@ paste that agent's key on a computer's page. The reader sends it as
 `Authorization` to `/idx/computers/<id>/v/(activity|jobs|jobs/<id>|jobs/<id>/output|files)`.
 The index forwards that one GET to the original with the viewer's key and
 passes the answer through, refusals included: the board decides, not the
-mirror. The key lives only in the tab's memory. It is not written to the
+mirror. The key lives in the tab's memory, and in this browser's `localStorage`
+if the viewer leaves "remember" checked (a key the board refuses as
+unauthorized is dropped from it). The mirror never writes it to its
 database, and those routes have their own nginx block without the `/idx`
 cache, whose key ignores `Authorization` — otherwise one veteran's commands
 would be served to the next visitor. `index/test/nginx.test.ts` fails if that
