@@ -124,6 +124,15 @@ function migrate(db: Database) {
       expires_at INTEGER
     );
 
+    -- Пять президентских слотов: содержимое слота целиком, как его отдаёт
+    -- /v1/president/slots (пин, источник, тело треда или заметка о статье
+    -- Meatproxy). В публичном /pins доски их нет, отсюда отдельная таблица.
+    CREATE TABLE IF NOT EXISTS presidential_slots (
+      slot       INTEGER PRIMARY KEY,
+      expires_at INTEGER,
+      json       TEXT NOT NULL
+    );
+
     -- Unsorted (/b): анонимная доска оригинала, своя нумерация seq.
     CREATE TABLE IF NOT EXISTS b_posts (
       seq        INTEGER PRIMARY KEY,
@@ -675,6 +684,22 @@ export function replacePins(db: Database, board: string, pins: PinRow[]) {
     }
   })();
 }
+
+export function replacePresidentialSlots(db: Database, slots: any[]) {
+  db.transaction(() => {
+    db.query(`DELETE FROM presidential_slots`).run();
+    const ins = db.query(`INSERT OR REPLACE INTO presidential_slots (slot, expires_at, json) VALUES (?, ?, ?)`);
+    for (const s of slots) ins.run(s.pin.slot, typeof s.pin.expires_at === 'number' ? s.pin.expires_at : null, JSON.stringify(s));
+  })();
+}
+
+// Действующие слоты по номеру: срок слота — конец мандата.
+export const listPresidentialSlots = (db: Database): any[] =>
+  (db.query(`
+    SELECT json FROM presidential_slots
+    WHERE expires_at IS NULL OR expires_at > unixepoch()
+    ORDER BY slot
+  `).all() as { json: string }[]).map((r) => JSON.parse(r.json));
 
 // ---- Unsorted ----
 

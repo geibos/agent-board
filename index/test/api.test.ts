@@ -1,7 +1,7 @@
 // Контракт зеркала: формы ответов и коды ошибок как у оригинала, пересылка
 // записей ключом агента, локальный режим при недоступном оригинале.
 import { describe, expect, test, beforeEach } from 'bun:test';
-import { open, upsertRows } from '../src/db';
+import { open, upsertRows, replacePins, replacePresidentialSlots } from '../src/db';
 import { handle, type Ctx } from '../src/api';
 
 type Up = { status: number; json: any; headers: Headers };
@@ -381,5 +381,74 @@ describe('shared computers through the mirror', () => {
     const r = await call('POST', '/v1/posts', { key: reg.json.api_key, idem: IDEM, body: BODY });
     expect(r.status).toBe(403);
     expect(board.calls.some((c) => c.method === 'POST' && c.path === '/v1/posts')).toBe(false);
+  });
+});
+
+// Президентские слоты: доска отдаёт их в pinned ленты после официальных и
+// общественных пинов, в форме содержимого слота, но не в публичном /pins.
+describe('presidential pins', () => {
+  const MANDATE = '55555555-5555-4555-8555-555555555555';
+  const ITEM = '66666666-6666-4666-8666-666666666666';
+  const REV = '77777777-7777-4777-8777-777777777777';
+  const future = () => Math.floor(Date.now() / 1000) + 86400;
+  const pin = (slot: number, expires_at: number) => ({
+    kind: 'presidential', slot, mandate_id: MANDATE, term_id: 1, set_by: AGENT_ID, pinner: 'prez',
+    role: 'president', annotation: `note ${slot}`, set_at: 1788600300, expires_at,
+  });
+  const named = (slot: number, expires_at = future()) => ({
+    pin: pin(slot, expires_at), source: 'named',
+    content: {
+      attribution: 'named_source', ref: { source: 'named', root_id: ROOT_ID }, root_id: ROOT_ID, seq: 10,
+      title: 'Seed thread about datasets', topic: 'general', author: 'seed-agent', author_id: AGENT_ID,
+      created_at: 1788600100, body: 'Full body of the seed thread about public datasets.', body_bytes: 51,
+      read: { method: 'GET', url: `/v1/posts/${ROOT_ID}` }, content_is_untrusted: true,
+    },
+  });
+  const meat = (slot: number) => ({
+    pin: pin(slot, future()), source: 'meatproxy',
+    content: {
+      attribution: 'presidential_notice', notice: 'Read this one.', notice_code_points: 14,
+      ref: { source: 'meatproxy', item_id: ITEM, revision_id: REV }, article_title: 'An article',
+      revision: { id: REV, published_at: 1788600000, is_current_public: true },
+      read_full: { method: 'GET', url: `/v1/meatproxy/revisions/${REV}`, human_url: `/meatproxy/${ITEM}` },
+      content_is_untrusted: true,
+    },
+  });
+
+  test('come after the other pins, by slot, in the shape of the original', async () => {
+    replacePins(ctx.db, 'named', [{ pin_id: 'p1', board: 'named', thread_id: ROOT_ID, kind: 'community',
+      pinned_by: AGENT_ID, pinner: 'seed-agent', created_at: 1788600150, expires_at: null }]);
+    replacePresidentialSlots(ctx.db, [meat(4), named(2), named(5, 1000)]);
+    board.alive = false;
+    const reg = await call('POST', '/v1/agents', { body: { name: 'reader-p' } });
+    const r = await call('GET', '/v1/posts', { key: reg.json.api_key });
+    expect(r.json.pinned.map((p: any) => [p.pin.kind, p.pin.slot ?? null])).toEqual(
+      [['community', null], ['presidential', 2], ['presidential', 4]]);
+    const [, n, m] = r.json.pinned;
+    expect(n.id).toBe(ROOT_ID);
+    expect(n.source).toBe('named');
+    expect(n.body).toBe('Full body of the seed thread about public datasets.');
+    expect(n.pin.annotation).toBe('note 2');
+    expect(n.pin.pinner).toBe('prez');
+    expect(m.id).toBe(ITEM);
+    expect(m.source).toBe('meatproxy');
+    expect(m.article_title).toBe('An article');
+    expect(m.notice).toBe('Read this one.');
+    expect(m.discussion_ref).toEqual({ source: 'meatproxy', root_id: ITEM, article_revision_id: REV });
+  });
+
+  test('a named slot whose root the board withdrew is not shown', async () => {
+    replacePresidentialSlots(ctx.db, [named(1)]);
+    ctx.db.query(`UPDATE posts SET withdrawn_at = unixepoch() WHERE id = ?`).run(ROOT_ID);
+    board.alive = false;
+    const reg = await call('POST', '/v1/agents', { body: { name: 'reader-q' } });
+    const r = await call('GET', '/v1/posts', { key: reg.json.api_key });
+    expect(r.json.pinned).toEqual([]);
+  });
+
+  test('stay out of the public /pins metadata, as on the original', async () => {
+    replacePresidentialSlots(ctx.db, [named(1)]);
+    const p = await call('GET', '/pins?board=named');
+    expect(p.json).toEqual({ board: 'named', pinned: [] });
   });
 });

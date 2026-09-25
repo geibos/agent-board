@@ -3,7 +3,7 @@
 import type { Database } from 'bun:sqlite';
 import type { Board } from './board';
 import type { Ctx } from './api';
-import { getMeta, setMeta, upsertRows, setBody, markBodyMissing, markChecked, markWithdrawn, setKarma, replacePins, upsertBRows, maxBSeq, minBSeq, type Row, type PinRow, type BRow } from './db';
+import { getMeta, setMeta, upsertRows, setBody, markBodyMissing, markChecked, markWithdrawn, setKarma, replacePins, replacePresidentialSlots, upsertBRows, maxBSeq, minBSeq, type Row, type PinRow, type BRow } from './db';
 import { syncVotes } from './votes';
 import { warmMeatproxy } from './proxy';
 import { flushOutbox } from './outbox';
@@ -67,7 +67,7 @@ export class Sync {
   #db: Database;
   #board: Board;
   #ctx: Ctx | null;
-  stats = { newRows: 0, gapsFilled: 0, bodies: 0, bodyShapeErrors: 0, canaryFailures: 0, karma: 0, pins: 0, unsorted: 0, votes: 0, meatproxy: 0, presenceChecked: 0, withdrawn: 0, forwarded: 0,
+  stats = { newRows: 0, gapsFilled: 0, bodies: 0, bodyShapeErrors: 0, canaryFailures: 0, karma: 0, pins: 0, presidentialSlots: 0, unsorted: 0, votes: 0, meatproxy: 0, presenceChecked: 0, withdrawn: 0, forwarded: 0,
     politics: 0, ballots: 0, politicsAt: 0, discussion: 0, discussionAt: 0, computers: 0, computersAt: 0,
     sweep: null as null | { at: number; pages: number; top: number; floor: number; served: number; withdrawn: number; refetched: number; rescored: number; complete: boolean; cursor: number | null },
     freshTick: 0, archiveTick: 0, freshError: '', archiveError: '',
@@ -470,6 +470,18 @@ export class Sync {
     this.stats.pins = total;
   }
 
+  // Президентские слоты — своя сущность доски, в публичный /pins не входят.
+  // Список меняется только целиком: ответ без списка — сбой, а не «слоты
+  // сняты», иначе один кривой ответ стёр бы закреплённое до следующего шага.
+  async syncPresidentialSlots() {
+    const j: any = await this.#board.get('/v1/president/slots');
+    if (!Array.isArray(j?.slots)) throw new Error('president/slots: no slots list');
+    const slots = j.slots.filter((s: any) => s?.pin?.kind === 'presidential' && Number.isInteger(s.pin.slot)
+      && (s.source === 'named' || s.source === 'meatproxy') && s.content && typeof s.content === 'object');
+    replacePresidentialSlots(this.#db, slots);
+    this.stats.presidentialSlots = slots.length;
+  }
+
   // Каждая фаза сама по себе: отказ одной не должен прятать остальные.
   #errors: string[] = [];
 
@@ -566,6 +578,7 @@ export class Sync {
       await this.#phase('обход', () => this.sweepPresence(Number(process.env.MIRROR_SWEEP_SEC ?? 1200)));
       await this.#phase('карма', () => this.refreshKarma());
       await this.#phase('пины', () => this.syncPins());
+      await this.#phase('президентские пины', () => this.syncPresidentialSlots());
       await this.#phase('unsorted', () => this.pullUnsorted());
       if (this.#ctx) {
         const ctx = this.#ctx;

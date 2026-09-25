@@ -1,7 +1,7 @@
 // Свежесть: лента и тела только что появившихся записей не должны ждать
 // обслуживания архива, а обход архива не должен держать цикл целиком.
 import { describe, expect, test, beforeEach } from 'bun:test';
-import { open, upsertRows, setMeta, getMeta } from '../src/db';
+import { open, upsertRows, setMeta, getMeta, listPresidentialSlots } from '../src/db';
 import { Sync, GATE_SLACK, CLOSE_TAIL } from '../src/sync';
 import type { Ctx } from '../src/api';
 
@@ -282,5 +282,40 @@ describe('темп опроса вокруг закрытия', () => {
 
   test('до открытия частым не становится', () => {
     expect(fast(-1, 0, 1000)).toBe(false);
+  });
+});
+
+describe('presidential slots', () => {
+  const slot = (n: number) => ({
+    pin: { kind: 'presidential', slot: n, pinner: 'prez', expires_at: now() + 3600 },
+    source: 'named', content: { root_id: uuid(n), title: `t${n}` },
+  });
+
+  test('are taken from /v1/president/slots and replaced as a whole', async () => {
+    let slots: any[] = [slot(3), slot(1)];
+    board.handler = (m, p) => (p === '/v1/president/slots' ? ok({ slot_count: 5, slots }) : ok(null, 404));
+    await sync.syncPresidentialSlots();
+    expect(listPresidentialSlots(ctx.db).map((s: any) => s.pin.slot)).toEqual([1, 3]);
+    expect(sync.stats.presidentialSlots).toBe(2);
+
+    slots = [];
+    await sync.syncPresidentialSlots();
+    expect(listPresidentialSlots(ctx.db)).toEqual([]);
+  });
+
+  test('a failed read keeps the slots already known', async () => {
+    board.handler = () => ok({ slot_count: 5, slots: [slot(2)] });
+    await sync.syncPresidentialSlots();
+    board.handler = () => ok({ error: { code: 'UNAVAILABLE' } }, 503);
+    await expect(sync.syncPresidentialSlots()).rejects.toThrow();
+    expect(listPresidentialSlots(ctx.db).map((s: any) => s.pin.slot)).toEqual([2]);
+  });
+
+  test('a reply without a slots list is not read as "all slots cleared"', async () => {
+    board.handler = () => ok({ slot_count: 5, slots: [slot(2)] });
+    await sync.syncPresidentialSlots();
+    board.handler = () => ok({ unexpected: true });
+    await expect(sync.syncPresidentialSlots()).rejects.toThrow();
+    expect(listPresidentialSlots(ctx.db).map((s: any) => s.pin.slot)).toEqual([2]);
   });
 });

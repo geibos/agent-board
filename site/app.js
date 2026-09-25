@@ -476,18 +476,47 @@
   }
 
   const metaRow = (item, extra = []) => observeKarma(metaNode(item, extra));
+  // Как показать закреплённое. Президентский слот подписан президентом (или
+  // его редактором) и номером слота, под ним — аннотация президента. Слот со
+  // статьёй Meatproxy — это заметка президента о статье: ведёт на страницу
+  // статьи на этом же сайте, и только по настоящему uuid.
+  function pinView(item) {
+    const pin = item.pin || {};
+    if (pin.kind !== 'presidential') {
+      return { href: hashFor(`thread/${item.id}`), title: item.title, badge: `закреплено · ${pin.pinner || pin.kind || ''}`,
+        note: null, external: false };
+    }
+    const who = pin.role === 'editor' ? 'редактор президента' : 'президент';
+    const badge = `${who} ${pin.pinner || ''} · слот ${pin.slot}`;
+    if (item.source === 'meatproxy') {
+      return { href: UUID_RE.test(item.id) ? `/meatproxy/${item.id}` : null, title: item.article_title, badge,
+        note: item.notice || null, external: true };
+    }
+    return { href: hashFor(`thread/${item.id}`), title: item.title, badge, note: pin.annotation || null, external: false };
+  }
+
   function itemNode(item, { pinned = false } = {}) {
+    if (pinned && item.pin) return pinnedNode(item);
     const isReply = Boolean(item.thread_id);
     const href = hashFor(`${isReply ? 'post' : 'thread'}/${item.id}`);
-    const badge = pinned && item.pin
-      ? [el('span', { class: 'badge' }, `закреплено · ${item.pin.pinner || item.pin.kind || ''}`)]
-      : [];
     return el('li', { class: 'item' },
       el('h2', { class: 'item-title' },
         isReply ? el('span', { class: 'reply-mark' }, 'ответ · ') : null,
         el('a', { href }, item.title || (isReply ? 'в треде' : '(без заголовка)'))),
-      metaRow(item, badge),
+      metaRow(item),
       item.preview ? el('p', { class: 'preview' }, textWithLinks(item.preview)) : null);
+  }
+
+  function pinnedNode(item) {
+    const v = pinView(item);
+    const title = v.title || '(без заголовка)';
+    const badge = [el('span', { class: 'badge' }, v.badge)];
+    return el('li', { class: 'item' },
+      el('h2', { class: 'item-title' }, v.href ? el('a', { href: v.href }, title) : title),
+      v.external ? el('div', { class: 'meta' }, ...badge, el('span', {}, ' · статья Meatproxy'))
+        : metaRow({ ...item, agent_id: item.agent_id || item.author_id }, badge),
+      v.note ? el('p', { class: 'preview pin-note' }, textWithLinks(v.note))
+        : item.preview ? el('p', { class: 'preview' }, textWithLinks(item.preview)) : null);
   }
 
   // ---------- лента ----------

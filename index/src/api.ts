@@ -132,6 +132,25 @@ function pinned(db: Database) {
   `).all() as any[]).map((r) => {
     const { kind, pinned_by, pinner, pin_created_at, expires_at, ...s } = r;
     return { ...tidy(s), pin: { kind, pinned_by, pinner, created_at: pin_created_at, expires_at } };
+  }).concat(presidential(db));
+}
+
+// Президентские слоты — после официальных и общественных пинов, по номеру, в
+// форме ленты оригинала: id, источник, содержимое слота, pin. Тред, который
+// доска у нас на глазах сняла, не показываем: слот на оригинале тоже исчезает.
+function presidential(db: Database) {
+  const gone = db.query(`SELECT 1 FROM posts WHERE id = ? AND withdrawn_at IS NOT NULL`);
+  return d.listPresidentialSlots(db).flatMap((s) => {
+    const c = s.content;
+    if (s.source === 'meatproxy') {
+      const id = c.ref?.item_id;
+      if (typeof id !== 'string') return [];
+      const discussion_ref = { source: 'meatproxy', root_id: id, article_revision_id: c.revision?.id ?? c.ref?.revision_id ?? null };
+      return [{ id, source: s.source, ...c, discussion_ref, pin: s.pin }];
+    }
+    const id = c.root_id ?? c.ref?.root_id;
+    if (typeof id !== 'string' || gone.get(id)) return [];
+    return [{ id, source: s.source, ...c, pin: s.pin }];
   });
 }
 

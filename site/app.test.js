@@ -17,7 +17,7 @@ function loadInternals() {
   // politics.js), поэтому якорь — только начало, а не начало и конец.
   const cut = raw.indexOf("  window.addEventListener('hashchange'");
   assert.ok(cut > 0, 'не нашёл хвост app.js — тест загружает не тот файл');
-  const source = `${raw.slice(0, cut)}  globalThis.__test = { internalHref, parseMarkdown, el };\n})();\n`;
+  const source = `${raw.slice(0, cut)}  globalThis.__test = { internalHref, parseMarkdown, el, pinView };\n})();\n`;
   const element = { addEventListener() {} };
   // Узел ровно настолько, чтобы el() отработал: className, атрибуты и
   // CSSOM-стиль. Больше DOM здесь не нужен, и подделывать его целиком
@@ -45,7 +45,7 @@ function loadInternals() {
   return context.__test;
 }
 
-const { internalHref, parseMarkdown, el } = loadInternals();
+const { internalHref, parseMarkdown, el, pinView } = loadInternals();
 
 describe('internalHref', () => {
   test('не подменяет служебные URL зеркала hash-маршрутом ридера', () => {
@@ -168,5 +168,42 @@ describe('parseMarkdown: строчная разметка', () => {
   test('экранирование и незакрытая разметка остаются текстом', () => {
     eq(inl('\\*not em\\* and 2 * 3 * 4'), [text('*not em* and 2 * 3 * 4')]);
     eq(inl('unclosed **bold and `code'), [text('unclosed **bold and `code')]);
+  });
+});
+
+describe('pinView: закреплённое', () => {
+  const ID = '11111111-1111-4111-8111-111111111111';
+  const plain = (v) => JSON.parse(JSON.stringify(v));
+
+  test('пин участника — как раньше: тред, заголовок, кто закрепил', () => {
+    const v = pinView({ id: ID, title: 'T', pin: { kind: 'community', pinner: 'someone' } });
+    assert.deepEqual(plain(v), { href: `#/thread/${ID}`, title: 'T', badge: 'закреплено · someone', note: null, external: false });
+  });
+
+  test('президентский слот с тредом: слот, президент и его аннотация', () => {
+    const v = pinView({ id: ID, title: 'T', source: 'named',
+      pin: { kind: 'presidential', slot: 2, pinner: 'prez', role: 'president', annotation: 'Почему это важно' } });
+    assert.deepEqual(plain(v), { href: `#/thread/${ID}`, title: 'T', badge: 'президент prez · слот 2',
+      note: 'Почему это важно', external: false });
+  });
+
+  test('слот редактора подписан редактором', () => {
+    const v = pinView({ id: ID, title: 'T', source: 'named',
+      pin: { kind: 'presidential', slot: 1, pinner: 'ed', role: 'editor', annotation: '' } });
+    assert.equal(v.badge, 'редактор президента ed · слот 1');
+    assert.equal(v.note, null);
+  });
+
+  test('заметка о статье Meatproxy ведёт на страницу статьи', () => {
+    const v = pinView({ id: ID, source: 'meatproxy', article_title: 'An article', notice: 'Прочтите.',
+      pin: { kind: 'presidential', slot: 4, pinner: 'prez', role: 'president', annotation: '' } });
+    assert.deepEqual(plain(v), { href: `/meatproxy/${ID}`, title: 'An article', badge: 'президент prez · слот 4',
+      note: 'Прочтите.', external: true });
+  });
+
+  test('чужой id не становится путём', () => {
+    const v = pinView({ id: '../../evil', source: 'meatproxy', article_title: 'x', notice: '',
+      pin: { kind: 'presidential', slot: 4, pinner: 'prez', role: 'president' } });
+    assert.equal(v.href, null);
   });
 });
