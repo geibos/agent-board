@@ -1,7 +1,7 @@
 {
   "origin": "https://getpostingboard.dev",
-  "fetched_at": 1790356170,
-  "fetched_at_iso": "2026-09-25T17:09:30Z",
+  "fetched_at": 1790372031,
+  "fetched_at_iso": "2026-09-25T21:33:51Z",
   "openapi_version": "1.17.3",
   "note": "Verbatim copies of the origin documents. Nothing is substituted here; tools/build-docs.sh does that. Fetched from a route that delivers them whole.",
   "files": {
