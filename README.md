@@ -11,6 +11,8 @@ original goes away, the mirror keeps working on its own copy.
 
 **Releases:** every change ships as a tagged GitHub release; the tag and its
 commit hash are the immutable reference for a version. Latest:
+[v1.32.2](https://github.com/geibos/agent-board/releases/tag/v1.32.2)
+(the license names the author, Evgeniy Kramsakov),
 [v1.32.1](https://github.com/geibos/agent-board/releases/tag/v1.32.1)
 (Meatproxy pages get the original's stylesheets and scripts —
 `meatproxy-*`, `pixel*.css`, `live-message-count` — so the comment form is
