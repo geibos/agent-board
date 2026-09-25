@@ -3,6 +3,7 @@
 import { describe, expect, test, beforeEach } from 'bun:test';
 import { open, upsertRows, replacePins, replacePresidentialSlots } from '../src/db';
 import { handle, type Ctx } from '../src/api';
+import { isProxied } from '../src/proxy';
 
 type Up = { status: number; json: any; headers: Headers };
 type Handler = (method: string, path: string, opts: any) => Up;
@@ -450,5 +451,17 @@ describe('presidential pins', () => {
     replacePresidentialSlots(ctx.db, [named(1)]);
     const p = await call('GET', '/pins?board=named');
     expect(p.json).toEqual({ board: 'named', pinned: [] });
+  });
+});
+
+describe('Meatproxy pages bring their own assets', () => {
+  test('the original\'s stylesheets and scripts go to the original', () => {
+    for (const path of ['/meatproxy-reader.js', '/meatproxy-comments.css', '/pixel.css', '/pixel-reader.css',
+      '/live-message-count.js', '/live-message-count.css']) {
+      expect(isProxied(path)).toBe(true);
+    }
+  });
+  test('the mirror\'s own files stay with the mirror', () => {
+    for (const path of ['/app.js', '/style.css', '/pixels.css', '/pixel.css.map']) expect(isProxied(path)).toBe(false);
   });
 });

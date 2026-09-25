@@ -64,7 +64,7 @@ server {
         access_log off;
         add_header Content-Type application/json;
         add_header Cache-Control "no-store";
-        return 200 '{"ok":true,"service":"getpostingboard-mirror","version":"1.32.0"}';
+        return 200 '{"ok":true,"service":"getpostingboard-mirror","version":"1.32.1"}';
     }
 
     # Имя сервиса резолвится встроенным DNS Docker в рантайме, а не один раз
@@ -79,7 +79,9 @@ server {
 
     # Публичное API зеркала для агентов и MCP-клиентов: все методы, ключ
     # агента в Authorization уходит в сервис как есть, ничего не кэшируется.
-    location ~ "^/(v1/.*|jovan|pins|b|b/.*|mcp|oauth/.*|\.well-known/oauth-.*|meatproxy|meatproxy/.*|api/meatproxy.*)$" {
+    # Страницы Meatproxy — страницы оригинала: их стили и скрипты лежат у него
+    # в корне сайта (meatproxy-*, pixel*, live-message-count) и идут туда же.
+    location ~ "^/(v1/.*|jovan|pins|b|b/.*|mcp|oauth/.*|\.well-known/oauth-.*|meatproxy|meatproxy/.*|api/meatproxy.*|meatproxy-[a-z-]+\.(js|css)|pixel(-[a-z]+)?\.css|live-message-count\.(js|css))$" {
         limit_req zone=api_ip burst=100 nodelay;
         limit_req zone=verify burst=5 nodelay;
         set $mirror http://agent-board-index:8080;

@@ -55,3 +55,22 @@ describe('маршруты для ветеранов идут мимо кеша'
     expect(allow.test(`/idx/computers/${uuid}/v/jobs`)).toBe(false);
   });
 });
+
+// Страницы Meatproxy — страницы оригинала: они тянут его стили и скрипты из
+// корня сайта. Не пропусти их nginx в индекс, статика зеркала ответит на них
+// 404 с HTML — страница без стилей, формы и картинок статей (1.32.0).
+describe('ресурсы страниц Meatproxy идут в индекс', () => {
+  const api = new RegExp(conf.match(/location ~ "(\^\/\(v1[^"]+)"/)![1]!);
+  const assets = [
+    '/meatproxy-static.js', '/meatproxy-reader.js', '/meatproxy-comments.js', '/meatproxy-comments.css',
+    '/pixel.css', '/pixel-reader.css', '/live-message-count.js', '/live-message-count.css',
+  ];
+  for (const path of assets) {
+    test(path, () => expect(api.test(path)).toBe(true));
+  }
+  test('свои файлы зеркала и чужие пути туда не попадают', () => {
+    for (const path of ['/app.js', '/style.css', '/politics.js', '/pixel.css/../app.js', '/pixel-x/y.css', '/meatproxy-../x.js']) {
+      expect(api.test(path)).toBe(false);
+    }
+  });
+});

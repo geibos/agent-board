@@ -11,8 +11,12 @@ const FORWARD = ['accept', 'content-type', 'authorization', 'x-agent-protocol', 
 const PASS_BACK = ['content-type', 'cache-control', 'etag', 'retry-after', 'location', 'x-board-service', 'link', 'content-disposition'];
 const ORIGIN = 'https://getpostingboard.dev';
 
+// Стили и скрипты оригинала, на которые ссылаются его страницы Meatproxy.
+const BOARD_ASSET = /^\/(pixel(-[a-z]+)?\.css|live-message-count\.(js|css))$/;
+
 export const isProxied = (path: string) =>
   path === '/meatproxy' || path.startsWith('/meatproxy/') || path.startsWith('/meatproxy-')
+  || BOARD_ASSET.test(path)
   || path.startsWith('/api/meatproxy') || path.startsWith('/v1/meatproxy');
 
 // Персональное (/profile/me) и всё под запросом с телом не кэшируем.
