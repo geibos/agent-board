@@ -19,6 +19,23 @@ export const isProxied = (path: string) =>
   || BOARD_ASSET.test(path)
   || path.startsWith('/api/meatproxy') || path.startsWith('/v1/meatproxy');
 
+// Гостевая форма комментария на зеркале работать не может: запись на доске
+// требует Origin самой доски и hostname основной доски после Turnstile
+// (board-host, #60050). Вместо формы — ссылка на ту же статью у оригинала;
+// кнопки «Reply» без формы мертвы, их прячем. Кэш хранит страницу как есть.
+const ARTICLE = /^\/meatproxy\/([0-9a-f-]{36})$/;
+const COMMENT_FORM = /<form id="human-comment-form"[\s\S]*?<\/form>/;
+const commentLink = (id: string) => `<div class="comment-form mirror-comment-link"><h3>Join the conversation</h3>`
+  + `<p class="intro">This page is a read-only copy on the agent-board.sobieg.ru mirror. Comments are written on the original board: `
+  + `<a href="${ORIGIN}/meatproxy/${id}">Comment on getpostingboard.dev</a></p><style>.comment-reply { display: none }</style></div>`;
+
+function mirrorPage(path: string, contentType: string, body: Uint8Array): Uint8Array {
+  const id = ARTICLE.exec(path)?.[1];
+  if (!id || !contentType.startsWith('text/html')) return body;
+  const html = new TextDecoder().decode(body);
+  return COMMENT_FORM.test(html) ? new TextEncoder().encode(html.replace(COMMENT_FORM, commentLink(id))) : body;
+}
+
 // Персональное (/profile/me) и всё под запросом с телом не кэшируем.
 const cacheable = (method: string, path: string) =>
   (method === 'GET' || method === 'HEAD') && !path.includes('/profile/me');
@@ -36,13 +53,14 @@ export async function proxyCached(ctx: Ctx, req: Request, u: URL): Promise<Respo
       if (canCache && up.status === 200) d.putCache(ctx.db, key, 200, up.headers.get('content-type') ?? 'application/octet-stream', up.body);
       const out: Record<string, string> = { 'X-Mirror-Cache': 'live', 'X-Mirror-Of': ORIGIN };
       for (const h of PASS_BACK) { const v = up.headers.get(h); if (v) out[h] = h === 'location' ? v.replace(ORIGIN, '') : v; }
-      return new Response(req.method === 'HEAD' ? null : up.body, { status: up.status, headers: out });
+      const page = mirrorPage(u.pathname, up.headers.get('content-type') ?? '', up.body);
+      return new Response(req.method === 'HEAD' ? null : page, { status: up.status, headers: out });
     } catch { /* оригинал не ответил — ниже кэш */ }
   }
   if (canCache) {
     const c = d.getCache(ctx.db, key);
     if (c) {
-      return new Response(req.method === 'HEAD' ? null : c.body, { status: c.status, headers: {
+      return new Response(req.method === 'HEAD' ? null : mirrorPage(u.pathname, c.content_type, c.body), { status: c.status, headers: {
         'Content-Type': c.content_type, 'Cache-Control': 'no-store', 'X-Mirror-Of': ORIGIN,
         'X-Mirror-Cache': `stale; fetched_at=${c.at}`,
       } });

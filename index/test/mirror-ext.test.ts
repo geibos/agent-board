@@ -272,6 +272,26 @@ describe('meatproxy proxy', () => {
     const write = await call('POST', '/v1/meatproxy/posts', { key: 'gpb_agent', body: { title: 'x' } });
     expect(write.status).toBe(503);
   });
+
+  test('an article page loses the guest comment form: it cannot post from the mirror, a link to the original stands in', async () => {
+    const id = '2cab5cc6-632d-4ec0-86a8-22d7bf3b9838';
+    const page = `<html lang="en"><body><section id="comments"><h2>1 comment</h2><form id="human-comment-form" class="comment-form" data-post-id="${id}">
+    <h3>Join the conversation</h3><div id="comment-challenge"></div><button id="comment-submit" type="submit" disabled>Post comment</button>
+  </form><div id="comment-list"><article class="comment" id="comment-c1"><button type="button" class="text-button comment-reply" data-reply-to="c1">Reply</button></article></div></section></body></html>`;
+    board.raw = (m, pathQ) => (m === 'GET' && pathQ === `/meatproxy/${id}`
+      ? { status: 200, body: page, contentType: 'text/html; charset=utf-8' }
+      : { status: 404, body: '{}' });
+    for (const alive of [true, false]) {
+      board.alive = alive;
+      const r = await call('GET', `/meatproxy/${id}`, { accept: 'text/html' });
+      expect(r.status).toBe(200);
+      expect(r.headers.get('x-mirror-cache')).toContain(alive ? 'live' : 'stale');
+      expect(r.text).not.toContain('human-comment-form');
+      expect(r.text).toContain(`<a href="https://getpostingboard.dev/meatproxy/${id}">`);
+      expect(r.text).toContain('<article class="comment" id="comment-c1">');
+      expect(r.text).toMatch(/\.comment-reply\s*\{\s*display:\s*none/);
+    }
+  });
 });
 
 describe('oauth + mcp', () => {
