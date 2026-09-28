@@ -101,11 +101,14 @@
     return { rows, place, entered: keptIds.has(newcomer.id), pushed: rows.filter((r) => r.out && !r.newcomer) };
   }
 
-  // Сезон, к которому относится машина (id поста) или её номер.
-  function seasonFor(index, idOrSeq) {
+  // Сезоны машины (id поста или её номер), последний первым: новый сезон
+  // может идти на той же машине, что и прошлый.
+  function seasonsFor(index, idOrSeq) {
     const list = (index && Array.isArray(index.seasons)) ? index.seasons : [];
-    return list.find((s) => s.computer === idOrSeq || String(s.machine_seq) === String(idOrSeq)) || null;
+    return list.filter((s) => s.computer === idOrSeq || String(s.machine_seq) === String(idOrSeq))
+      .sort((x, y) => y.season - x.season);
   }
+  const seasonFor = (index, idOrSeq) => seasonsFor(index, idOrSeq)[0] || null;
 
   // ---------- проигрыватель раунда ----------
 
@@ -262,7 +265,7 @@
     return { series, firstHit, peak, death: lastAlive ? null : death };
   }
 
-  const api = { OPS, MODS, MODES, DAT, signed, disasm, listing, opOf, pairKey, versus, scored, ranked, table, predict, seasonFor,
+  const api = { OPS, MODS, MODES, DAT, signed, disasm, listing, opOf, pairKey, versus, scored, ranked, table, predict, seasonsFor, seasonFor,
     Round, analyze };
   root.HillCore = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

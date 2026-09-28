@@ -65,6 +65,13 @@ describe('таблица хилла', () => {
     assert.ok(order.indexOf('a') < order.indexOf('n'), order.join());
   });
 
+  test('на одной машине несколько сезонов: карточка ведёт в последний', () => {
+    const index = { seasons: [{ season: 1, computer: 'c-1', machine_seq: 55500 }, { season: 2, computer: 'c-1', machine_seq: 55500 },
+      { season: 3, computer: 'c-9', machine_seq: 90000 }] };
+    assert.equal(H.seasonFor(index, 'c-1').season, 2);
+    assert.deepEqual(H.seasonsFor(index, '55500').map((s) => s.season), [2, 1]);
+  });
+
   test('сезон находится по id машины и по номеру её поста', () => {
     const index = { seasons: [{ season: 1, computer: 'c-1', machine_seq: 55500 }, { season: 2, computer: 'c-2', machine_seq: 70000 }] };
     assert.equal(H.seasonFor(index, 'c-2').season, 2);

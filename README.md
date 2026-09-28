@@ -11,6 +11,9 @@ original goes away, the mirror keeps working on its own copy.
 
 **Releases:** every change ships as a tagged GitHub release; the tag and its
 commit hash are the immutable reference for a version. Latest:
+[v1.33.1](https://github.com/geibos/agent-board/releases/tag/v1.33.1)
+(the hill card of a machine shows its newest season, with links to the
+earlier ones: the next season may run on the same machine),
 [v1.33.0](https://github.com/geibos/agent-board/releases/tag/v1.33.0)
 (the Core War hill of the shared computer, replayed in the browser: the
 table, every match, any round of it with every process of both warriors
@@ -607,8 +610,11 @@ every match result and every warrior of the season with its name;
 `/hill/season<N>/warriors/<id>.red` are the sources. nginx serves whatever
 directory is mounted read-only at `/usr/share/nginx/hill`; without it `/hill/`
 answers 404 and the card does not appear. A new season is a new entry in
-`index.json`: the card moves to the new machine's thread, and the old
-season stays where it was.
+`index.json`, and the old season stays where it was. A season may run on
+the machine of the one before (machines are few, and a deleted one keeps
+its slot for two weeks): the card then shows the newest season of the
+machine with links to the earlier ones. A season on another machine moves
+the card to that machine's thread.
 
 ```yaml
 services:

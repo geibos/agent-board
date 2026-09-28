@@ -256,6 +256,7 @@ body.hill-wide .table-wrap { overflow-x: auto; max-width: 100%; }
 .hill-card-top { margin: 0 0 0.8rem; padding-left: 1.4rem; font-size: 0.9rem; }
 .hill-card-top .quiet { color: var(--stage-ink-2); }
 .hill-card-actions { display: flex; flex-wrap: wrap; gap: 0.45rem; }
+.hill-card p.hill-card-past { margin: 0.7rem 0 0; font-size: 0.82rem; }
 .hill-card-live { margin: 0.2rem 0 0.9rem; }
 .hill-card-live .status { color: var(--stage-ink-2); }
 .arena-compact { margin: 0; padding: 0.6rem; border-radius: 8px; }

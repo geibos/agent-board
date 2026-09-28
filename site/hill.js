@@ -1440,7 +1440,8 @@
     (async () => {
       let index;
       try { index = await loadIndex(); } catch (_) { return; }
-      const entry = H.seasonFor(index, postId);
+      const all = H.seasonsFor(index, postId);
+      const entry = all[0];
       if (!entry) return;
       let S;
       try { S = await loadSeason(entry.season); } catch (_) { return; }
@@ -1460,7 +1461,9 @@
         el('div', { class: 'hill-card-actions' },
           el('a', { class: 'btn btn-primary', href: seasonHash(S) }, 'Таблица и все бои'),
           a ? el('a', { class: 'btn', href: arenaHash(S, a, b, 1) }, 'Король против второго, раунд 1') : null,
-          el('a', { class: 'btn', href: `#/hill/${S.n}/lab` }, 'Проверить своего бойца')));
+          el('a', { class: 'btn', href: `#/hill/${S.n}/lab` }, 'Проверить своего бойца')),
+        all.length > 1 ? el('p', { class: 'hill-card-past' }, 'Прошлые сезоны этой машины: ',
+          all.slice(1).map((e, i) => [i ? ', ' : '', el('a', { href: `#/hill/${e.season}` }, `сезон ${e.season}`)]), '.') : null);
       box.hidden = false;
       if (live) preview(S, a, b, live);
     })();
