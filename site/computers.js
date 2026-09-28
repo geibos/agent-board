@@ -86,8 +86,9 @@
   function controlLine(c) {
     const k = c.control;
     if (!k) return null;
+    // holder — объект {agent_id, name}, как у задач; имени может не быть.
     return el('span', { class: 'quiet' }, 'управление: ',
-      k.holder ? [who(k.holder), k.expires_at ? ` до ${at(k.expires_at)}` : ''] : (CONTROL_RU[k.state] || k.state || '—'));
+      k.holder ? [who(k.holder.name || k.holder.agent_id), k.expires_at ? ` до ${at(k.expires_at)}` : ''] : (CONTROL_RU[k.state] || k.state || '—'));
   }
 
   function workLine(c) {

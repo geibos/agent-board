@@ -1,7 +1,7 @@
 'use strict';
 // Экраны общих компьютеров. Тот же приём, что в politics.test.js: мини-DOM,
-// у которого replaceChildren, как настоящий, превращает всё, что не узел, в
-// текст. Проверяется, что экран рисуется без мусора текстом и что на нём
+// у которого replaceChildren и append, как настоящие, превращают всё, что не
+// узел, в текст. Проверяется, что экран рисуется без мусора текстом и что на нём
 // есть ответ на вопрос «кто что делал» — участники и журнал.
 
 const { readFileSync } = require('node:fs');
@@ -17,8 +17,8 @@ function node(tag) {
     append(...kids) {
       for (const k of kids.flat(Infinity)) {
         if (k === null || k === undefined || k === false) continue;
-        if (typeof k === 'string' || typeof k === 'number') this.text += String(k);
-        else this.children.push(k);
+        if (typeof k === 'object' && 'tag' in k) this.children.push(k);
+        else this.text += String(k);
       }
     },
   };
@@ -41,7 +41,8 @@ const card = {
   id: ID, seq: 53452, title: 'Board data verification', author: 'agent-board-sobieg', created_at: 1790192365,
   purpose: 'Independent verification of the board\'s public data.', template: 'shared-1x-1gb',
   runtime: { state: 'running', observed_at: 1790192379, stale: false, pending: null, session: { ends_at: 1790195979 } },
-  control: { state: 'held', holder: 'hermione', expires_at: 1790192679, generation: 3 },
+  // Так доска отдаёт управление в /v1/computers/:id (ComputerControl).
+  control: { state: 'held', holder: { agent_id: 'b7c1e0d2-5f3a-4c8e-9a71-2d4f6e8a0c13', name: 'hermione' }, expires_at: 1790192679, generation: 3 },
   work: { active: [{ id: 'j1', state: 'running' }], recent: [] },
   usage: { running_seconds: 600, rx_bytes: 1048576, tx_bytes: 2048, computer_month_seconds: 108000 },
   lifecycle: { archived_at: null }, activity_count: 3, last_activity_at: 1790192400, seen_at: 1790192410, gone_at: null,
@@ -88,6 +89,7 @@ describe('экраны компьютеров', () => {
       assert.equal(app.text, '', `на странице текстом: ${app.text}`);
       assert.ok(app.children.length > 0, 'страница пуста');
       assert.equal(byClass(app, 'error').length, 0, 'вместо экрана ошибка');
+      assert.doesNotMatch(allText(app), /\[object /, 'объект вместо текста');
     });
   }
 
@@ -99,6 +101,12 @@ describe('экраны компьютеров', () => {
     assert.match(t, /работает/);
     assert.match(t, /hermione/);
     assert.match(t, /пост удалён/);
+  });
+
+  test('у руля агент без имени — виден его id, а не «система»', async () => {
+    const nameless = { ...card, control: { ...card.control, holder: { agent_id: 'b7c1e0d2-5f3a-4c8e-9a71-2d4f6e8a0c13', name: null } } };
+    const app = await screen(['computers'], {}, { '/computers': { computers: [nameless], synced_at: 1790192410 } });
+    assert.match(allText(app), /b7c1e0d2-5f3a-4c8e-9a71-2d4f6e8a0c13/);
   });
 
   test('машина: кто что делал — участники и журнал', async () => {
