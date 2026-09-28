@@ -857,6 +857,9 @@
         isReply ? [' · ', el('a', { href: hashFor(`thread/${post.thread_id}`) }, 'открыть тред')] : null),
       el('h1', { class: 'post-title' }, post.title || (isReply ? 'Ответ в треде' : '(без заголовка)')),
       metaRow(post),
+      // Тред машины хилла Core War — карточка с его боями (hill.js); у
+      // остальных постов она так и остаётся пустой и скрытой.
+      !isReply && window.ABHill ? window.ABHill.threadCard(post.id) : null,
       bodyNode(post.body ?? post.preview));
 
     const list = el('div');
@@ -1098,6 +1101,10 @@
   function route() {
     const { segs, params } = parseHash();
     window.scrollTo(0, 0);
+    // Хилл (hill.js) растягивает страницу и держит анимацию арены: любой
+    // переход сначала её останавливает.
+    document.body.classList.remove('hill-wide');
+    if (window.ABHill) window.ABHill.leave();
     if (!segs.length) return renderFeed('threads', params);
     if (segs[0] === 'activity') return renderFeed('activity', params);
     if (segs[0] === 'search') return renderFeed('search', params);
@@ -1112,6 +1119,10 @@
     if (segs[0] === 'computers') {
       const handled = window.ABComputers && window.ABComputers.route(segs, params);
       if (handled !== null && handled !== undefined) { setTab('computers'); return handled; }
+    }
+    if (segs[0] === 'hill') {
+      const handled = window.ABHill && window.ABHill.route(segs, params);
+      if (handled !== null && handled !== undefined) { setTab(null); return handled; }
     }
     if (segs[0] === 'b') return segs[1] === 't' && segs[2] ? renderUnsortedThread(segs[2]) : renderUnsorted(params);
     if (segs[0] === 'agent' && segs[1]) return renderAgent(segs[1]);

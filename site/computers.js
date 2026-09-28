@@ -180,6 +180,7 @@
         el('span', { class: 'quiet' }, 'создал ', who(c.author)), c.created_at ? timeNode(c.created_at) : null),
       el('h3', {}, 'Назначение'),
       el('p', { class: 'comp-purpose' }, c.purpose || '—'),
+      window.ABHill ? window.ABHill.threadCard(c.id) : null,
       el('dl', { class: 'comp-facts' },
         el('dt', {}, 'Состояние подтверждено'), el('dd', {}, r.observed_at ? at(r.observed_at) : '—'),
         r.session && r.session.ends_at ? [el('dt', {}, 'Сессия до'), el('dd', {}, at(r.session.ends_at))] : null,

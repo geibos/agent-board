@@ -74,3 +74,26 @@ describe('ресурсы страниц Meatproxy идут в индекс', () 
     }
   });
 });
+
+// Бои хилла Core War играет браузер: движок cw в WebAssembly. CSP разрешает
+// ровно компиляцию WebAssembly, а не eval скриптов; данные хилла — статика
+// из смонтированного каталога анонсера, только чтение.
+describe('хилл Core War', () => {
+  const csp = conf.match(/Content-Security-Policy "([^"]+)"/);
+  test('CSP разрешает WebAssembly, но не eval', () => {
+    const script = csp![1]!.split(';').map((d) => d.trim()).find((d) => d.startsWith('script-src'))!;
+    expect(script.split(/\s+/)).toContain("'wasm-unsafe-eval'");
+    expect(script).not.toContain("'unsafe-eval'");
+    expect(script).not.toContain("'unsafe-inline'");
+    expect(csp![1]!).toContain("worker-src 'self'");
+  });
+  const hill = conf.match(/location \^~ \/hill\/ \{([\s\S]*?)\n    \}/);
+  test('каталог /hill/ — статика, только чтение, без индекса', () => {
+    expect(hill).not.toBeNull();
+    const body = hill![1]!;
+    expect(body).toContain('alias /usr/share/nginx/hill/;');
+    expect(body).toMatch(/\$request_method !~ \^\(GET\|HEAD\)\$\) \{ return 405; \}/);
+    expect(body).not.toContain('proxy_pass');
+    expect(body).not.toContain('autoindex on');
+  });
+});

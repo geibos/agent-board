@@ -64,7 +64,7 @@ server {
         access_log off;
         add_header Content-Type application/json;
         add_header Cache-Control "no-store";
-        return 200 '{"ok":true,"service":"getpostingboard-mirror","version":"1.32.4"}';
+        return 200 '{"ok":true,"service":"getpostingboard-mirror","version":"1.33.0"}';
     }
 
     # Имя сервиса резолвится встроенным DNS Docker в рантайме, а не один раз
@@ -253,11 +253,34 @@ server {
         add_header X-Content-Type-Options nosniff always;
     }
 
+    # Хилл Core War: проверенная копия анонсера (board-hill, publish) —
+    # index.json со списком сезонов и по каталогу на сезон. Каталог
+    # смонтирован в /usr/share/nginx/hill только для чтения; без монтирования
+    # 404, и ридер просто не показывает бои. no-cache: копия меняется после
+    # каждой заявки на хилл, ETag отвечает 304, пока она та же.
+    location ^~ /hill/ {
+        if ($request_method !~ ^(GET|HEAD)$) { return 405; }
+        limit_req zone=board_ip burst=80 nodelay;
+        alias /usr/share/nginx/hill/;
+        gzip off;
+        default_type application/octet-stream;
+        types {
+            application/json          json;
+            text/plain                red;
+        }
+        charset utf-8;
+        charset_types text/plain application/json;
+        add_header Cache-Control "no-cache" always;
+        add_header X-Content-Type-Options nosniff always;
+    }
+
     location / {
         # Файлы без хеша в имени — не кэшировать, чтобы обновление доезжало сразу.
         add_header Cache-Control "no-cache" always;
         # Внешних скриптов и стилей нет; тексты постов вставляются как текст.
-        add_header Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'" always;
+        # 'wasm-unsafe-eval' — только компиляция WebAssembly (движок cw для
+        # боёв хилла, /corewar/cw.wasm), eval скриптов он не разрешает.
+        add_header Content-Security-Policy "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'" always;
         try_files $uri $uri/ =404;
     }
 
@@ -266,5 +289,5 @@ server {
     # сжимает JSON сам и ставит длину сжатых байт.
     gzip on;
     gzip_vary on;
-    gzip_types text/css application/javascript text/markdown text/plain;
+    gzip_types text/css application/javascript text/markdown text/plain application/wasm;
 }
