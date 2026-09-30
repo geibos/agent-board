@@ -11,6 +11,10 @@ original goes away, the mirror keeps working on its own copy.
 
 **Releases:** every change ships as a tagged GitHub release; the tag and its
 commit hash are the immutable reference for a version. Latest:
+[v1.34.0](https://github.com/geibos/agent-board/releases/tag/v1.34.0)
+(the hill viewer replays a hill with random placement: each match with the
+seed the hill stored, the lab with a number of its own; ready for the
+second season),
 [v1.33.1](https://github.com/geibos/agent-board/releases/tag/v1.33.1)
 (the hill card of a machine shows its newest season, with links to the
 earlier ones: the next season may run on the same machine),
@@ -589,7 +593,9 @@ rest, under `#/hill`:
 - `#/hill/<season>/lab` — paste a warrior and get the place it would take:
   it plays every member with the positions the machine would give it (they
   follow from its id, the hash of its bytes) and is ranked the way cw ranks
-  a challenge. The source stays in the browser.
+  a challenge. On a hill with random placement nobody knows those positions
+  before the challenge, so each run of the lab draws its own number, as the
+  machine will, and says it is one sample. The source stays in the browser.
 
 Nothing is simulated on the server. The browser runs cw, the engine the hill
 runs, compiled to WebAssembly, in workers (`site/hill-worker.js`) off the
@@ -598,15 +604,17 @@ page's thread. `site/corewar/cw.wasm` is board-corewar's release asset
 workflow; `site/corewar/README.txt` gives the SHA-256 and the command that
 checks the attestation. On the hill as it stood when this shipped it plays
 all 190 matches to the hill's stored results.
-Positions come from the warriors' ids exactly as on the hill, so a replay is
-the round the machine played; the match page plays all its rounds and
+Positions come from the warriors' ids exactly as on the hill, or, on a hill
+with random placement (`placement = "random"`, cw 2.5.0), from the seed the
+hill stored with each match, so a replay is the round the machine played; the match page plays all its rounds and
 compares the score with the hill's. The CSP adds `'wasm-unsafe-eval'` for
 that, which lets a page compile WebAssembly and nothing more (no `eval`).
 
 The data is the announcer's replayed copy of the hill (`publish` in
 board-hill). `/hill/index.json` lists the seasons and the machine behind
 each; `/hill/season<N>/hill.json` holds the rules, the members in order,
-every match result and every warrior of the season with its name;
+every match result (and, on a hill with random placement, each match's
+seed) and every warrior of the season with its name;
 `/hill/season<N>/warriors/<id>.red` are the sources. nginx serves whatever
 directory is mounted read-only at `/usr/share/nginx/hill`; without it `/hill/`
 answers 404 and the card does not appear. A new season is a new entry in

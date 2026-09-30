@@ -265,8 +265,29 @@
     return { series, firstHit, peak, death: lastAlive ? null : death };
   }
 
+  // Раскладка матча хилла. На хилле со случайной раскладкой (placement =
+  // "random" в hill.toml) посев каждого матча записан при нём: seeds в
+  // hill.json. На хилле на хешах записи нет — null, и движок выводит посев из
+  // id бойцов, как cw.
+  function hillSeed(doc, a, b) {
+    const s = doc.seeds && doc.seeds[pairKey(a, b)];
+    return Number.isInteger(s) ? s : null;
+  }
+
+  const randomPlacement = (doc) => Boolean(doc.rules && doc.rules.placement === 'random');
+
+  // Посев матча из числа вызова, как drawn_seed в cw (hill.rs): первые 8 байт
+  // sha256(«число:A:B»), big-endian, по модулю числа позиций. draw — строкой
+  // или BigInt: число 64-битное.
+  async function drawnSeed(draw, a, b, positions) {
+    const d = new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${draw}:${a}:${b}`)));
+    let n = 0n;
+    for (let i = 0; i < 8; i++) n = (n << 8n) | BigInt(d[i]);
+    return Number(n % BigInt(positions));
+  }
+
   const api = { OPS, MODS, MODES, DAT, signed, disasm, listing, opOf, pairKey, versus, scored, ranked, table, predict, seasonsFor, seasonFor,
-    Round, analyze };
+    Round, analyze, hillSeed, randomPlacement, drawnSeed };
   root.HillCore = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 }(typeof window !== 'undefined' ? window : globalThis));

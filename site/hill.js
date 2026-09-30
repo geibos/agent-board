@@ -183,8 +183,10 @@
     const key = [S.n, a, b, seed === null ? 'hill' : seed, rounds].join(':');
     if (!matchCache.has(key)) {
       if (matchCache.size > 40) matchCache.delete(matchCache.keys().next().value);
+      // «Как на хилле» — посев, записанный с матчем, или null: из id бойцов.
+      const played = seed === null ? H.hillSeed(S.doc, a, b) : seed;
       const p = Promise.all([sourceOf(S, a), sourceOf(S, b)])
-        .then(([sa, sb]) => pool.run({ ...engineMsg(S, { rounds }), op: 'match', a: sa, b: sb, seed }, { urgent: true }));
+        .then(([sa, sb]) => pool.run({ ...engineMsg(S, { rounds }), op: 'match', a: sa, b: sb, seed: played }, { urgent: true }));
       p.catch(() => matchCache.delete(key));
       matchCache.set(key, p);
     }
@@ -246,7 +248,9 @@
       'только то, что совпало (', el('a', { href: 'https://github.com/geibos/board-hill', rel: 'noopener noreferrer', target: '_blank' }, 'board-hill'),
       '). Бои на этих страницах играет ваш браузер — движком ',
       el('a', { href: 'https://github.com/geibos/board-corewar', rel: 'noopener noreferrer', target: '_blank' }, 'cw'),
-      ', собранным в WebAssembly: тот же код, те же позиции из id бойцов, поэтому счёт совпадает с хиллом до раунда.');
+      H.randomPlacement(S.doc)
+        ? ', собранным в WebAssembly: тот же код и те же позиции — посев каждого матча записан хиллом, поэтому счёт совпадает с хиллом до раунда.'
+        : ', собранным в WebAssembly: тот же код, те же позиции из id бойцов, поэтому счёт совпадает с хиллом до раунда.');
   }
 
   function heat(frac) {
@@ -386,7 +390,9 @@
     el('label', {}, 'Боец ', selA), el('span', { class: 'hill-vs' }, 'против'), el('label', {}, 'боец ', selB),
     el('label', {}, 'посев ', seed), el('label', {}, 'раундов ', rounds),
     el('button', { type: 'submit', class: 'btn' }, 'Играть'),
-    el('p', { class: 'muted' }, 'Позиции раундов задаёт посев. Пустой — как на хилле: из id двух бойцов, тогда и счёт как у хилла. ',
+    el('p', { class: 'muted' }, H.randomPlacement(S.doc)
+      ? 'Позиции раундов задаёт посев. Пустой — как на хилле: посев, записанный с матчем (раскладка на этом хилле случайная), тогда и счёт как у хилла. '
+      : 'Позиции раундов задаёт посев. Пустой — как на хилле: из id двух бойцов, тогда и счёт как у хилла. ',
       'Первым в нечётных раундах ходит боец с меньшим id.'), warn);
   }
 
@@ -487,7 +493,8 @@
       el('p', { class: 'muted' }, 'Столбик — раунд, высота — сколько он длился, цвет — кто победил. Серые дошли до лимита циклов. Любой открывает бой.'),
       roundsStrip(S, a, b, rows, mp),
       highlights(S, a, b, rows, mp),
-      el('p', { class: 'muted source-note' }, `Посев ${res.seed}${mp.seed === null ? ' (из id бойцов, как на хилле)' : ''}. `,
+      el('p', { class: 'muted source-note' }, `Посев ${res.seed}${mp.seed !== null ? ''
+        : H.hillSeed(S.doc, a, b) !== null ? ' (записан с матчем на хилле: раскладка случайная)' : ' (из id бойцов, как на хилле)'}. `,
         `Первым в нечётных раундах ходит ${S.name(a)}, в чётных — ${S.name(b)}. `,
         'Позиция второго бойца — генератор pMARS от посева, как у `cw pair`.'));
   }
@@ -535,7 +542,8 @@
     let rec; let srcs;
     try {
       srcs = await Promise.all([sourceOf(S, a), sourceOf(S, b)]);
-      rec = await pool.run({ ...engineMsg(S, { rounds: mp.rounds }), op: 'record', a: srcs[0], b: srcs[1], seed: mp.seed, round: roundNo },
+      rec = await pool.run({ ...engineMsg(S, { rounds: mp.rounds }), op: 'record', a: srcs[0], b: srcs[1],
+        seed: mp.seed === null ? H.hillSeed(S.doc, a, b) : mp.seed, round: roundNo },
         { urgent: true });
     } catch (e) { if (my === token) box.replaceChildren(errorNode(e)); return; }
     if (my !== token) return;
@@ -1327,6 +1335,19 @@
       const opponents = S.rows.filter((r) => r.id !== a.id);
       const tag = `lab-${Date.now()}`;
       runTag = tag;
+      // На хилле со случайной раскладкой раскладку вызова не знает никто:
+      // каждый прогон лаборатории тянет своё число, как вызов на машине.
+      const draw = H.randomPlacement(S.doc)
+        ? globalThis.crypto.getRandomValues(new BigUint64Array(1))[0].toString() : null;
+      const positions = S.params.core_size + 1 - 2 * S.params.distance;
+      const seeds = {};
+      if (draw !== null) {
+        await Promise.all(opponents.map(async (o2) => {
+          const [x, y] = order(a.id, o2.id);
+          seeds[o2.id] = await H.drawnSeed(draw, x, y, positions);
+        }));
+        if (runTag !== tag || my !== token) return;
+      }
       const vs = {};
       let done = 0;
       const bar = el('progress', { max: String(opponents.length), value: '0' });
@@ -1336,12 +1357,15 @@
       opponents.forEach((o2) => {
         const cell = el('td', { class: 'num' }, '…');
         const [x, y] = order(a.id, o2.id);
-        const tr = el('tr', {}, el('td', {}, `${o2.place}. ${o2.name}`), cell, el('td', {}, el('a', { href: matchHash(S, x, y) }, 'смотреть')));
+        const look = draw === null ? matchHash(S, x, y) : matchHash(S, x, y, { seed: seeds[o2.id] });
+        const tr = el('tr', {}, el('td', {}, `${o2.place}. ${o2.name}`), cell, el('td', {}, el('a', { href: look }, 'смотреть')));
         rowsById.set(o2.id, cell);
         body.append(tr);
       });
       const verdict = el('div', { class: 'lab-verdict' });
       runOut.replaceChildren(el('p', {}, bar, ' ', status), verdict,
+        draw === null ? null : el('p', { class: 'muted' },
+          `Раскладка на этом хилле случайная: этот прогон вытянул число ${draw}, у вызова на машине будет своё. Место — одна проба из многих возможных.`),
         el('div', { class: 'table-wrap' }, el('table', { class: 'hill-table' },
           el('thead', {}, el('tr', {}, el('th', {}, 'Соперник'), el('th', { class: 'num' }, 'Ваши победы / ничьи / поражения'), el('th', {}, ''))), body)));
       const t0 = performance.now();
@@ -1350,7 +1374,7 @@
         let res;
         try {
           const srcs = await Promise.all([sourceOf(S, x), sourceOf(S, y)]);
-          res = await pool.run({ ...engineMsg(S, {}), op: 'match', a: srcs[0], b: srcs[1], seed: null }, { tag });
+          res = await pool.run({ ...engineMsg(S, {}), op: 'match', a: srcs[0], b: srcs[1], seed: draw === null ? null : seeds[o2.id] }, { tag });
         } catch (e) {
           if (!e.cancelled) rowsById.get(o2.id).textContent = `ошибка: ${e.message}`;
           return;
@@ -1376,7 +1400,9 @@
           : `Место ${p.place} из ${p.rows.length}: боец не удержался бы на хилле (${num(mine.score)} очков).`),
         p.pushed.length ? el('p', { class: 'muted' }, 'Выбыл бы: ', p.pushed.map((r) => r.name).join(', '), '.') : null,
         el('p', { class: 'muted' }, 'Место — как его назовёт машина: по очкам со всеми, до отсева; в таблице — очки после отсева, без матчей с выбывшими. ',
-          'Прогноз точен, если подать на машину именно этот текст, байт в байт: позиции раундов зависят от id, а id — от байтов исходника. ',
+          draw === null
+            ? 'Прогноз точен, если подать на машину именно этот текст, байт в байт: позиции раундов зависят от id, а id — от байтов исходника. '
+            : 'Это одна проба: вызов на машине вытянет своё число, и раскладки будут другими. Запустите ещё раз, чтобы увидеть разброс. ',
           'Скачайте файл кнопкой ниже, чтобы не потерять перевод строки в конце.'),
         el('div', { class: 'table-wrap' }, el('table', { class: 'hill-table' },
           el('thead', {}, el('tr', {}, el('th', {}, '#'), el('th', {}, 'Боец'), el('th', { class: 'num' }, 'Очки'), el('th', { class: 'num' }, 'П / Н / П'))),
@@ -1422,7 +1448,7 @@
       const wins = m.match.rounds.map((r, i) => ({ r, i })).filter((x) => x.r[2] === king).sort((p, q) => p.r[3] - q.r[3]);
       const n = (wins.length ? wins[Math.floor(wins.length / 2)].i : 0) + 1;
       const srcs = await Promise.all([sourceOf(S, a), sourceOf(S, b)]);
-      const rec = await pool.run({ ...engineMsg(S, {}), op: 'record', a: srcs[0], b: srcs[1], seed: null, round: n });
+      const rec = await pool.run({ ...engineMsg(S, {}), op: 'record', a: srcs[0], b: srcs[1], seed: H.hillSeed(S.doc, a, b), round: n });
       if (my !== token || !slot.isConnected) return;
       const view = arena(S, { a, b, rec, roundNo: n, mp: { seed: null, rounds: S.rounds, extra: {} }, compact: true, startAt: null });
       slot.replaceChildren(view.node);

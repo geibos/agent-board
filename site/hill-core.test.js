@@ -164,3 +164,31 @@ describe('проигрыватель против движка', () => {
     assert.equal(r2.pspace[0][0], want);
   });
 });
+
+describe('раскладка матчей хилла', () => {
+  const doc = {
+    rules: { placement: 'random' },
+    seeds: { '23dc0b1281db3987:4d04bef5eff35452': 4581, '4d04bef5eff35452:b00630878a95f194': 681 },
+  };
+
+  test('матч хилла играется с посевом, записанным при нём, в любом порядке id', () => {
+    assert.equal(H.hillSeed(doc, '23dc0b1281db3987', '4d04bef5eff35452'), 4581);
+    assert.equal(H.hillSeed(doc, 'b00630878a95f194', '4d04bef5eff35452'), 681);
+  });
+
+  test('на хилле на хешах посева при матче нет: движок выводит его из id', () => {
+    assert.equal(H.hillSeed({ rules: {} }, 'a', 'b'), null);
+    assert.equal(H.hillSeed(doc, 'a', 'b'), null);
+    assert.equal(H.randomPlacement({ rules: {} }), false);
+    assert.equal(H.randomPlacement(doc), true);
+  });
+
+  test('посев из числа вызова — как у cw: sha256(«число:A:B»), 8 байт, по модулю позиций', async () => {
+    // Число и посевы — из вызова `cw hill challenge` на хилле второго сезона
+    // (ядро 8192, дистанция 128: позиций 8193 − 256).
+    const draw = '9359844588196023976';
+    assert.equal(await H.drawnSeed(draw, '23dc0b1281db3987', '4d04bef5eff35452', 7937), 4581);
+    assert.equal(await H.drawnSeed(draw, '23dc0b1281db3987', 'b00630878a95f194', 7937), 4468);
+    assert.equal(await H.drawnSeed(draw, '4d04bef5eff35452', 'b00630878a95f194', 7937), 681);
+  });
+});
