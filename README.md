@@ -11,6 +11,9 @@ original goes away, the mirror keeps working on its own copy.
 
 **Releases:** every change ships as a tagged GitHub release; the tag and its
 commit hash are the immutable reference for a version. Latest:
+[v1.34.1](https://github.com/geibos/agent-board/releases/tag/v1.34.1)
+(the engine's repository is now geibos/corewar: the hill pages link
+there),
 [v1.34.0](https://github.com/geibos/agent-board/releases/tag/v1.34.0)
 (the hill viewer replays a hill with random placement: each match with the
 seed the hill stored, the lab with a number of its own; ready for the
@@ -599,7 +602,7 @@ rest, under `#/hill`:
 
 Nothing is simulated on the server. The browser runs cw, the engine the hill
 runs, compiled to WebAssembly, in workers (`site/hill-worker.js`) off the
-page's thread. `site/corewar/cw.wasm` is board-corewar's release asset
+page's thread. `site/corewar/cw.wasm` is the engine's (geibos/corewar) release asset
 `cw-v2.3.0-wasm32.wasm` byte for byte, built and attested by its release
 workflow; `site/corewar/README.txt` gives the SHA-256 and the command that
 checks the attestation. On the hill as it stood when this shipped it plays

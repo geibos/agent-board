@@ -1,5 +1,5 @@
 'use strict';
-// Движок cw в WebAssembly (site/corewar/cw.wasm, собран из board-corewar,
+// Движок cw в WebAssembly (site/corewar/cw.wasm, собран из corewar,
 // каталог wasm/): его функции и память, в JS-вызовах. Этот файл подключает
 // воркер просмотрщика (hill-worker.js) и тесты в node — склейка одна.
 (function (root) {

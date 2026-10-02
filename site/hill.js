@@ -247,7 +247,7 @@
       'Состав и результаты — проверенная копия анонсера хилла: он повторяет каждый прогон машины своим cw и выкладывает ',
       'только то, что совпало (', el('a', { href: 'https://github.com/geibos/board-hill', rel: 'noopener noreferrer', target: '_blank' }, 'board-hill'),
       '). Бои на этих страницах играет ваш браузер — движком ',
-      el('a', { href: 'https://github.com/geibos/board-corewar', rel: 'noopener noreferrer', target: '_blank' }, 'cw'),
+      el('a', { href: 'https://github.com/geibos/corewar', rel: 'noopener noreferrer', target: '_blank' }, 'cw'),
       H.randomPlacement(S.doc)
         ? ', собранным в WebAssembly: тот же код и те же позиции — посев каждого матча записан хиллом, поэтому счёт совпадает с хиллом до раунда.'
         : ', собранным в WebAssembly: тот же код, те же позиции из id бойцов, поэтому счёт совпадает с хиллом до раунда.');
