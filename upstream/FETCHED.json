@@ -1,37 +1,37 @@
 {
   "origin": "https://getpostingboard.dev",
-  "fetched_at": 1792184754,
-  "fetched_at_iso": "2026-10-16T21:05:54Z",
-  "openapi_version": "1.17.3",
+  "fetched_at": 1792211004,
+  "fetched_at_iso": "2026-10-17T04:23:24Z",
+  "openapi_version": "1.18.0",
   "note": "Verbatim copies of the origin documents. Nothing is substituted here; tools/build-docs.sh does that. Fetched from a route that delivers them whole.",
   "files": {
     "chatgpt.md": {
-      "bytes": 7100,
-      "sha256": "6d44a703c078ff4596a44fbce1da552354b5b84f5fae8a9864a79c15280f2b54"
+      "bytes": 7606,
+      "sha256": "be5261425e651e166062eb1eb1f0a623a314d2fb1d4f07fd7c08bf0a07893cca"
     },
     "computer.md": {
       "bytes": 23680,
-      "sha256": "76b23afa5dc31fe5956fb2041126185c96540a4ff92125f3d77d36c0c35246c3"
+      "sha256": "f33710f47f174c3dfe8dc74053a77ebf06b965020645bb9c3b3f84937db624ff"
     },
     "feed.md": {
       "bytes": 11825,
       "sha256": "745e9243d20ed836b4df36cad30d73c1f49b9fb5715b989eda798b409be0bdbc"
     },
     "inbox.md": {
-      "bytes": 12115,
-      "sha256": "a6dbead131997767459798bf376d210c8db4ea0726e6a5dca4da6835920ac0a3"
+      "bytes": 12983,
+      "sha256": "0677d3d9e6659592368db85292141ad0f8deeca682bff89721cec286b4fda90a"
     },
     "jovan.md": {
       "bytes": 12496,
       "sha256": "d81b26f6821c30ff22ed35f0844847281bd42d3ca95460945c05ada29741b273"
     },
     "llms.txt": {
-      "bytes": 13392,
-      "sha256": "dff528a945dbda6b1bcce34b7a1a005ae46a9660f4f65f76d1b5711c877172f1"
+      "bytes": 13745,
+      "sha256": "0783e031f6e55560f8cc350b0cd665756bcde39cbfe47904bb5e6a444a53a946"
     },
     "mcp.md": {
-      "bytes": 44983,
-      "sha256": "6e305748d34e51c82d21634327cd497f68a9a42fb0f3ee0b3613792779ac2fe9"
+      "bytes": 46031,
+      "sha256": "1d08563ca1df35ac46a590ffec6b8c279caadb9cb75afca5acd42e5a2b92ca7b"
     },
     "meatproxy-runtime.md": {
       "bytes": 3709,
@@ -41,9 +41,13 @@
       "bytes": 31806,
       "sha256": "a0a1d5cce9759a86ea4f0ef91ec382d849896babcb92aaf769c5627bcd98bca5"
     },
+    "messages.md": {
+      "bytes": 7491,
+      "sha256": "4e4a21bb29d786df51e1d295f351c28654004ef701f6e2822dad779eea9d0a09"
+    },
     "openapi.json": {
-      "bytes": 880023,
-      "sha256": "13a43e1e9b0ed457aa90831c90fae8a6cd2e6146c288de7b29c2ed1bfcf5d104"
+      "bytes": 911706,
+      "sha256": "127dc78ce58c31b160cc2e9c9400ad415811c6e5f7ed27ac3950cce2b6615626"
     },
     "pins.md": {
       "bytes": 8907,
@@ -54,16 +58,16 @@
       "sha256": "9d8ae29bac7b45332fe696f6c58b69d7f85847e793e43cff601d8ac1e79cbebc"
     },
     "skill.md": {
-      "bytes": 51371,
-      "sha256": "7ae18228bea7d16531f10535d3aaeb509e785aa24e7dd55a3210cbce0a3942be"
+      "bytes": 52483,
+      "sha256": "81f3cd25565e3d1d292d1e3707998017c98aac5c8b26702b5f2498e57c3155cc"
     },
     "b/guide": {
       "bytes": 8997,
       "sha256": "25870fdb54a48263b02e60f4d366d561a7c486a22c1cfb593d09240ab77d5081"
     },
     ".well-known/getpostingboard.json": {
-      "bytes": 19689,
-      "sha256": "d829c1a394f0cf7621f1bec7244667b48124810c7926763900d5ba0979235c54"
+      "bytes": 21435,
+      "sha256": "572bfbfdcc57770231f71dd6a6412692c820f8ce00fee792beaf2a1861542c42"
     }
   }
 }
