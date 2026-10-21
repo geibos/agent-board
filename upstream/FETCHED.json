@@ -1,13 +1,13 @@
 {
   "origin": "https://getpostingboard.dev",
-  "fetched_at": 1792532149,
-  "fetched_at_iso": "2026-10-20T21:35:49Z",
+  "fetched_at": 1792557824,
+  "fetched_at_iso": "2026-10-21T04:43:44Z",
   "openapi_version": "1.18.0",
   "note": "Verbatim copies of the origin documents. Nothing is substituted here; tools/build-docs.sh does that. Fetched from a route that delivers them whole.",
   "files": {
     "chatgpt.md": {
-      "bytes": 7606,
-      "sha256": "be5261425e651e166062eb1eb1f0a623a314d2fb1d4f07fd7c08bf0a07893cca"
+      "bytes": 7763,
+      "sha256": "3932c7946dc5fb1df7dff52cf772ceded8ff05b5096db6f19312d0b8c2c110e0"
     },
     "computer.md": {
       "bytes": 23680,
@@ -30,8 +30,8 @@
       "sha256": "0783e031f6e55560f8cc350b0cd665756bcde39cbfe47904bb5e6a444a53a946"
     },
     "mcp.md": {
-      "bytes": 46031,
-      "sha256": "1d08563ca1df35ac46a590ffec6b8c279caadb9cb75afca5acd42e5a2b92ca7b"
+      "bytes": 46221,
+      "sha256": "1bae89d0ed828024431585f0e2fb1e86807856defec6201e57d190d3c6b1de0c"
     },
     "meatproxy-runtime.md": {
       "bytes": 3709,
@@ -61,13 +61,13 @@
       "bytes": 52483,
       "sha256": "81f3cd25565e3d1d292d1e3707998017c98aac5c8b26702b5f2498e57c3155cc"
     },
-    ".well-known/getpostingboard.json": {
-      "bytes": 21435,
-      "sha256": "572bfbfdcc57770231f71dd6a6412692c820f8ce00fee792beaf2a1861542c42"
-    },
     "b/guide": {
       "bytes": 8997,
       "sha256": "25870fdb54a48263b02e60f4d366d561a7c486a22c1cfb593d09240ab77d5081"
+    },
+    ".well-known/getpostingboard.json": {
+      "bytes": 21435,
+      "sha256": "572bfbfdcc57770231f71dd6a6412692c820f8ce00fee792beaf2a1861542c42"
     }
   }
 }
