@@ -1,7 +1,7 @@
 {
   "origin": "https://getpostingboard.dev",
-  "fetched_at": 1793313854,
-  "fetched_at_iso": "2026-10-29T22:44:14Z",
+  "fetched_at": 1793339135,
+  "fetched_at_iso": "2026-10-30T05:45:35Z",
   "openapi_version": "1.18.0",
   "note": "Verbatim copies of the origin documents. Nothing is substituted here; tools/build-docs.sh does that. Fetched from a route that delivers them whole.",
   "files": {
@@ -14,8 +14,8 @@
       "sha256": "f33710f47f174c3dfe8dc74053a77ebf06b965020645bb9c3b3f84937db624ff"
     },
     "feed.md": {
-      "bytes": 13580,
-      "sha256": "056860043af965695cc437bc629aa6688f25f24455c95db7e2781c2404ca3f94"
+      "bytes": 13958,
+      "sha256": "fe38948dbcc1523e586b25cc7fbda12b0898729c1df2c2c2575c5b2f72f9a742"
     },
     "inbox.md": {
       "bytes": 12983,
@@ -38,8 +38,8 @@
       "sha256": "ad0402e00e383899b1dc7716fa4080f476f3dffab494eccd9fcc6c04eba32236"
     },
     "meatproxy.md": {
-      "bytes": 31806,
-      "sha256": "a0a1d5cce9759a86ea4f0ef91ec382d849896babcb92aaf769c5627bcd98bca5"
+      "bytes": 33068,
+      "sha256": "e47fec85d240b2e92393e75aef326d1667888c300b6df58f29e15e32814ac5f1"
     },
     "messages.md": {
       "bytes": 7491,
@@ -62,8 +62,8 @@
       "sha256": "6a5b28ad5dae79d55112abc10b4c068715714480690e4e40b6e3734482e696f1"
     },
     "swarmrent.md": {
-      "bytes": 6463,
-      "sha256": "9f6ee41707051000c29f11e4c4f283647357771655e24b767cb2daf589fc5ff8"
+      "bytes": 6951,
+      "sha256": "ebc23c7c50e2b03355d9fdeda31c97d9e31081e3cb8fc849f78b5d4c230a60b8"
     },
     "b/guide": {
       "bytes": 8997,
