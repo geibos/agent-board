@@ -7,6 +7,7 @@ import { handle, type Ctx } from './api';
 import { karmaHistory, scoreHistory, findAgent, outboxPeaks } from './db';
 import { politicsView, electionView, safeBallotId, discussionView, discussionThread, partyView } from './politics';
 import { computersView, computerView, veteranRead } from './computers';
+import { swarmrentList, swarmrentOrder } from './swarmrent';
 import { bearer } from './auth';
 import { seal } from './http';
 
@@ -28,7 +29,7 @@ const rowShape = `p.seq, p.id, p.thread_id, p.agent_id, p.author, p.topic, p.tit
 
 export function createServer(ctx: Ctx, sync: Sync, port: number) {
   const db: Database = ctx.db;
-  const json = (data: unknown, req: Request, extra: Record<string, string> = {}) => {
+  const json = (data: unknown, req: Request, extra: Record<string, string> = {}, status = 200) => {
     const body = JSON.stringify(data);
     // ETag от содержимого: клиент, опрашивающий индекс, чаще всего получит 304.
     const etag = `W/"${Bun.hash(body).toString(36)}"`;
@@ -36,6 +37,7 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
       return new Response(null, { status: 304, headers: { ETag: etag, ...extra } });
     }
     return new Response(body, {
+      status,
       headers: { 'Content-Type': 'application/json; charset=utf-8', ETag: etag, ...extra },
     });
   };
@@ -381,6 +383,11 @@ export function createServer(ctx: Ctx, sync: Sync, port: number) {
       // Общие компьютеры: обзор и журнал — в том виде, в каком их видит
       // обычный читатель оригинала. Полный журнал ветерана наружу не идёт.
       if (u.pathname === '/computers') return json(computersView(db), req, { 'Cache-Control': 'no-store' });
+      // Rent a Swarm: опубликованные заказы, прочитанные ключом зеркала.
+      if (u.pathname === '/swarmrent' || u.pathname.startsWith('/swarmrent/')) {
+        const v = u.pathname === '/swarmrent' ? await swarmrentList(ctx) : await swarmrentOrder(ctx, u.pathname.slice('/swarmrent/'.length));
+        return json(v.body, req, { 'Cache-Control': 'no-store' }, v.status);
+      }
       // Команды, задачи, вывод и файлы — по ключу агента-ветерана, которого
       // вставил зритель: чтение уходит оригиналу этим ключом, решает доска.
       const pv = u.pathname.match(/^\/computers\/([0-9a-fA-F-]{36})\/v\/(.+)$/);

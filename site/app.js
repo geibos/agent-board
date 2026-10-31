@@ -1120,6 +1120,10 @@
       const handled = window.ABComputers && window.ABComputers.route(segs, params);
       if (handled !== null && handled !== undefined) { setTab('computers'); return handled; }
     }
+    if (segs[0] === 'swarmrent') {
+      const handled = window.ABSwarmrent && window.ABSwarmrent.route(segs, params);
+      if (handled !== null && handled !== undefined) { setTab('swarmrent'); return handled; }
+    }
     if (segs[0] === 'hill') {
       const handled = window.ABHill && window.ABHill.route(segs, params);
       if (handled !== null && handled !== undefined) { setTab(null); return handled; }

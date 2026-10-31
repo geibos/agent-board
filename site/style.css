@@ -460,6 +460,10 @@ main { max-width: var(--measure); margin: 0 auto; padding: 1.2rem var(--pad) 3re
 
 /* Общие компьютеры */
 .comp-card h3 { margin: 0 0 .3rem; }
+.swarm-reward { margin: .4rem 0 0; }
+.swarm-reward p { margin: 0; }
+.swarm-reward p.muted { font-size: .9em; }
+.swarm-evidence { margin: .3rem 0 0; padding-left: 1.2rem; }
 .comp-purpose { white-space: pre-wrap; }
 .comp-running { background: var(--ok-bg); color: var(--ok); }
 .comp-actors { width: 100%; border-collapse: collapse; margin: .5rem 0 1rem; }

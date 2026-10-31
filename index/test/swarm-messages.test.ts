@@ -5,6 +5,7 @@
 import { describe, expect, test, beforeEach } from 'bun:test';
 import { open } from '../src/db';
 import { handle, type Ctx } from '../src/api';
+import { swarmrentList, swarmrentOrder } from '../src/swarmrent';
 
 const enc = new TextEncoder();
 const AGENT_ID = '33333333-3333-4333-8333-333333333333';
@@ -17,7 +18,7 @@ class FakeBoard {
   alive = true;
   lastProbe = 0;
   stats = { requests: 0, throttled: 0, errors: 0, forwarded: 0 };
-  calls: { method: string; path: string; headers: Record<string, string>; body?: string }[] = [];
+  calls: { method: string; path: string; headers: Record<string, string>; body?: string; ourKey?: boolean }[] = [];
   raw: (method: string, pathQ: string, headers: Record<string, string>, body?: string) => Raw = () => ({ status: 404, body: '{"error":{"code":"NOT_FOUND"}}' });
   isAlive() { return this.alive; }
   markDead() { this.alive = false; }
@@ -31,10 +32,10 @@ class FakeBoard {
   }
   async get() { throw Object.assign(new Error('board 404'), { status: 404 }); }
   async getPublic() { throw Object.assign(new Error('board 404'), { status: 404 }); }
-  async proxy(method: string, pathQ: string, headers: Record<string, string>, body?: Uint8Array | string) {
+  async proxy(method: string, pathQ: string, headers: Record<string, string>, body?: Uint8Array | string, opts: { ourKey?: boolean } = {}) {
     if (!this.alive) throw new Error('down');
     const text = body === undefined ? undefined : typeof body === 'string' ? body : new TextDecoder().decode(body);
-    this.calls.push({ method, path: pathQ, headers, body: text });
+    this.calls.push({ method, path: pathQ, headers, body: text, ourKey: !!opts.ourKey });
     const r = this.raw(method, pathQ, headers, text);
     const h = new Headers(r.headers ?? {}); h.set('content-type', r.contentType ?? 'application/json');
     return { status: r.status, headers: h, body: enc.encode(r.body) };
@@ -245,5 +246,49 @@ describe('mcp and oauth', () => {
     expect(full.scope).toBe('board:read board:write messages:read messages:write');
     board.raw = (m, p) => (m === 'GET' && p === '/v1/me/message-settings' ? { status: 200, body: '{"inbound":"open"}' } : { status: 404, body: '{}' });
     expect((await tool(full.token, 'get_message_settings', {})).out.inbound).toBe('open');
+  });
+});
+
+describe('reader: /idx/swarmrent', () => {
+  const open = { id: ORDER, status: 'open', title: 'Open order', revision: 1, payment_terms: '$10', requester_name: 'denis' };
+  const pending = { id: '55555555-5555-4555-8555-555555555555', status: 'pending', title: 'Not reviewed yet' };
+  const rejected = { id: '66666666-6666-4666-8666-666666666666', status: 'rejected', title: 'Refused' };
+  const listBody = JSON.stringify({ orders: [open, pending, rejected], limit: 50 });
+
+  test('read with the mirror\'s own key, unpublished and refused orders never shown, fresh answer reused', async () => {
+    board.raw = (m, p) => (m === 'GET' && p === '/v1/swarmrent/orders' ? { status: 200, body: listBody } : { status: 404, body: '{}' });
+    const a = await swarmrentList(ctx);
+    expect(a.status).toBe(200);
+    expect(a.body.orders.map((o: any) => o.id)).toEqual([ORDER]);
+    expect(a.body.live).toBe(true);
+    expect(board.calls.every((c) => c.ourKey)).toBe(true);
+    await swarmrentList(ctx);
+    expect(board.calls.length).toBe(1);
+  });
+
+  test('while the original is down the last copy is served and says when it was taken; without one — 503', async () => {
+    board.alive = false;
+    expect((await swarmrentList(ctx)).status).toBe(503);
+    board.alive = true;
+    board.raw = () => ({ status: 200, body: listBody });
+    await swarmrentList(ctx);
+    board.alive = false;
+    const stale = await swarmrentList(ctx);
+    expect([stale.status, stale.body.live, typeof stale.body.fetched_at]).toEqual([200, false, 'number']);
+    expect(stale.body.orders.length).toBe(1);
+  });
+
+  test('one order with its results; an unpublished one is 404 like an unknown one', async () => {
+    const comment = { id: 'c1', kind: 'result', body: 'done', author: 'worker', signature_verified: true, evidence: [{ url: 'https://e.example/log', description: 'log' }] };
+    board.raw = (m, p) => {
+      if (p === `/v1/swarmrent/orders/${ORDER}`) return { status: 200, body: JSON.stringify({ order: open, comments: [comment], certificate_url: '/v1/swarmrent/orders/x/certificate' }) };
+      if (p === `/v1/swarmrent/orders/${pending.id}`) return { status: 200, body: JSON.stringify({ order: pending, comments: [] }) };
+      return { status: 404, body: '{"error":{"code":"NOT_FOUND"}}' };
+    };
+    const r = await swarmrentOrder(ctx, ORDER);
+    expect([r.status, r.body.order.title, r.body.comments[0].kind]).toEqual([200, 'Open order', 'result']);
+    expect((await swarmrentOrder(ctx, pending.id)).status).toBe(404);
+    expect((await swarmrentOrder(ctx, '77777777-7777-4777-8777-777777777777')).status).toBe(404);
+    expect((await swarmrentOrder(ctx, 'not-a-uuid')).status).toBe(404);
   });
 });
