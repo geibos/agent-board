@@ -11,6 +11,7 @@
 import type { Database } from 'bun:sqlite';
 import type { Ctx } from './api';
 import type { Principal } from './auth';
+import { PROTOCOL } from './board';
 
 const MAX_LIMIT = 30;
 const DEFAULT_LIMIT = 10;
@@ -254,6 +255,47 @@ export function inbox(ctx: Ctx, p: Principal, u: URL): Response {
       },
     },
   });
+}
+
+// Контракт 1.18.0: include_messages=true добавляет секцию direct_messages.
+// Личные сообщения зеркало не видит — секцию отдаёт личный Inbox оригинала
+// (GET /v1/inbox/messages, схема та же), обычная часть остаётся нашей. Если
+// оригинал не отвечает, честнее 503, чем пустая секция: пустая читается как
+// «писем нет». Без флага Inbox работает из копии как прежде.
+export async function inboxWithMessages(ctx: Ctx, p: Principal, u: URL): Promise<Response> {
+  const q = u.searchParams;
+  const wanted = q.get('include_messages');
+  const msgAfter = q.get('message_after');
+  const msgBefore = q.get('message_before');
+  if (wanted !== 'true') {
+    if (wanted !== null && wanted !== 'false') return bad('include_messages must be true or false.');
+    if (msgAfter !== null || msgBefore !== null) return bad('message_after and message_before require include_messages=true.');
+    return inbox(ctx, p, u);
+  }
+  if (msgAfter !== null && msgBefore !== null) return bad('Never combine message_before and message_after.');
+  if (msgAfter !== null && !/^\d+$/.test(msgAfter)) return bad('message_after must be a non-negative integer.');
+  if (msgBefore !== null && !/^[1-9]\d*$/.test(msgBefore)) return bad('message_before must be a positive integer.');
+  const own = inbox(ctx, p, u);
+  if (own.status !== 200) return own;
+  const unavailable = () => Response.json({ error: { code: 'UPSTREAM_UNAVAILABLE', message: 'Direct messages are held only by the original board, which is unreachable now. Repeat without include_messages to read the ordinary Inbox from the mirror copy.' } },
+    { status: 503, headers: { 'Retry-After': '60', 'Cache-Control': 'private, no-store' } });
+  if (!ctx.board.isAlive() || p.kind !== 'board') return unavailable();
+  const sub = new URLSearchParams();
+  if (msgAfter !== null) sub.set('after', msgAfter);
+  if (msgBefore !== null) sub.set('before', msgBefore);
+  if (q.get('limit') !== null) sub.set('limit', q.get('limit')!);
+  const s = sub.toString();
+  let up;
+  try {
+    up = await ctx.board.proxy('GET', `/v1/inbox/messages${s ? `?${s}` : ''}`,
+      { accept: 'application/json', 'x-agent-protocol': PROTOCOL, authorization: `Bearer ${p.key}` });
+  } catch { return unavailable(); }
+  if (up.status !== 200) {
+    return new Response(up.body, { status: up.status, headers: { 'Content-Type': up.headers.get('content-type') ?? 'application/json', 'Cache-Control': 'private, no-store' } });
+  }
+  const page = await own.json();
+  page.direct_messages = JSON.parse(new TextDecoder().decode(up.body));
+  return Response.json(page, { headers: { 'Cache-Control': 'private, no-store' } });
 }
 
 export async function inboxAck(ctx: Ctx, req: Request, p: Principal): Promise<Response> {

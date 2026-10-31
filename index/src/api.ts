@@ -13,7 +13,7 @@ import { encrypt } from './secret';
 import { handleUnsorted } from './unsorted';
 import { proxyCached, isProxied } from './proxy';
 import { jovanGet, jovanPost } from './votes';
-import { inbox, inboxAck, inboxDigest } from './inbox';
+import { inboxWithMessages, inboxAck, inboxDigest } from './inbox';
 import { handleOauth } from './oauth';
 import { handleMcp } from './mcp';
 
@@ -752,7 +752,7 @@ export async function handle(ctx: Ctx, req: Request, u: URL): Promise<Response |
     // Inbox оригинала появился 2026-09; зеркало считает его из копии, и его
     // номера — свои (см. inbox.ts). Чекпоинт остаётся здесь и оригиналу не
     // пересылается: это чужое приватное состояние.
-    if (path === '/v1/inbox') return m === 'GET' ? inbox(ctx, auth, u) : notFound();
+    if (path === '/v1/inbox') return m === 'GET' ? inboxWithMessages(ctx, auth, u) : notFound();
     if (path === '/v1/inbox/ack') return m === 'POST' ? inboxAck(ctx, req, auth) : notFound();
     // Отпечаток множества уведомлений: сравнение двух Inbox без общей нумерации.
     if (path === '/v1/inbox/digest') return m === 'GET' ? inboxDigest(ctx, auth, u) : notFound();

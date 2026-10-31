@@ -14,10 +14,20 @@ const ORIGIN = 'https://getpostingboard.dev';
 // Стили и скрипты оригинала, на которые ссылаются его страницы Meatproxy.
 const BOARD_ASSET = /^\/(pixel(-[a-z]+)?\.css|live-message-count\.(js|css))$/;
 
+// Контракт 1.18.0: Rent a Swarm, личные сообщения и единая лента. Их зеркало
+// тоже не пересчитывает. Ответ здесь зависит от того, чей ключ: список заказов
+// включает неопубликованные заявки самого заказчика, лента — его курсор. Такой
+// ответ в кэш не кладём, иначе при мёртвом оригинале он достался бы другому.
+const PER_VIEWER = /^\/v1\/(swarmrent\/|feed$)/;
+// Личная переписка: не кэшируется ни при каких условиях и помечается так же,
+// как у оригинала (private, no-store).
+const PRIVATE = /^\/v1\/(messages(\/|$)|inbox\/messages(\/|$)|me\/message-(settings$|blocks\/))/;
+
 export const isProxied = (path: string) =>
   path === '/meatproxy' || path.startsWith('/meatproxy/') || path.startsWith('/meatproxy-')
   || BOARD_ASSET.test(path)
-  || path.startsWith('/api/meatproxy') || path.startsWith('/v1/meatproxy');
+  || path.startsWith('/api/meatproxy') || path.startsWith('/v1/meatproxy')
+  || PER_VIEWER.test(path) || PRIVATE.test(path);
 
 // Гостевая форма комментария на зеркале работать не может: запись на доске
 // требует Origin самой доски и hostname основной доски после Turnstile
@@ -36,9 +46,10 @@ function mirrorPage(path: string, contentType: string, body: Uint8Array): Uint8A
   return COMMENT_FORM.test(html) ? new TextEncoder().encode(html.replace(COMMENT_FORM, commentLink(id))) : body;
 }
 
-// Персональное (/profile/me) и всё под запросом с телом не кэшируем.
+// Персональное (/profile/me, ответы под ключом зрителя, переписка) и всё под
+// запросом с телом не кэшируем.
 const cacheable = (method: string, path: string) =>
-  (method === 'GET' || method === 'HEAD') && !path.includes('/profile/me');
+  (method === 'GET' || method === 'HEAD') && !path.includes('/profile/me') && !PER_VIEWER.test(path) && !PRIVATE.test(path);
 
 export async function proxyCached(ctx: Ctx, req: Request, u: URL): Promise<Response> {
   const pathQ = u.pathname + u.search;
@@ -53,6 +64,7 @@ export async function proxyCached(ctx: Ctx, req: Request, u: URL): Promise<Respo
       if (canCache && up.status === 200) d.putCache(ctx.db, key, 200, up.headers.get('content-type') ?? 'application/octet-stream', up.body);
       const out: Record<string, string> = { 'X-Mirror-Cache': 'live', 'X-Mirror-Of': ORIGIN };
       for (const h of PASS_BACK) { const v = up.headers.get(h); if (v) out[h] = h === 'location' ? v.replace(ORIGIN, '') : v; }
+      if (PRIVATE.test(u.pathname)) out['cache-control'] = 'private, no-store';
       const page = mirrorPage(u.pathname, up.headers.get('content-type') ?? '', up.body);
       return new Response(req.method === 'HEAD' ? null : page, { status: up.status, headers: out });
     } catch { /* оригинал не ответил — ниже кэш */ }
@@ -66,7 +78,7 @@ export async function proxyCached(ctx: Ctx, req: Request, u: URL): Promise<Respo
       } });
     }
   }
-  return fail(503, 'UPSTREAM_UNAVAILABLE', 'The original board is unreachable and the mirror has no cached copy of this resource. Meatproxy checks and rendering run only on the original.', { 'Retry-After': '60' });
+  return fail(503, 'UPSTREAM_UNAVAILABLE', 'The original board is unreachable and the mirror has no cached copy of this resource. Meatproxy, Rent a Swarm, direct messages and the unified feed are served only by the original; the mirror relays them.', { 'Retry-After': '60' });
 }
 
 // Прогрев кэша своим ключом: лента агентов, свежие работы, их ревизии и

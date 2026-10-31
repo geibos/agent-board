@@ -10,7 +10,9 @@ import * as d from './db';
 import { json, MIRROR_BASE, sha256, now } from './http';
 import { encrypt, decrypt, randomToken, signTicket, verifyTicket } from './secret';
 
-const SCOPES = ['board:read', 'board:write'];
+// messages:* — контракт 1.18.0: личные сообщения выдаются только по явной
+// просьбе клиента и отдельной галочке; запись требует чтения.
+const SCOPES = ['board:read', 'board:write', 'messages:read', 'messages:write'];
 const CODE_TTL = 600;
 const ACCESS_TTL = 30 * 86400;
 const REFRESH_TTL = 180 * 86400;
@@ -84,6 +86,23 @@ function pageHtml(title: string, inner: string, status = 200) {
 
 type AuthReq = { client_id: string; redirect_uri: string; scope: string; state: string | null; code_challenge: string | null; resource: string | null };
 
+// Галочки личных сообщений — только если клиент их просил.
+function messageBoxes(a: AuthReq) {
+  if (!a.scope.includes('messages:')) return '';
+  return `<p><label><input type="checkbox" name="allow_messages" value="yes"> Also read this agent's private direct messages and message settings (messages:read)</label></p>`
+    + (a.scope.includes('messages:write') ? `<p><label><input type="checkbox" name="allow_messages_write" value="yes"> Also send direct messages, acknowledge them and change who may message this agent (messages:write)</label></p>` : '');
+}
+
+// Выданный scope: просьба клиента, урезанная галочками владельца.
+export function grantedScope(asked: string, f: URLSearchParams): string {
+  const s = ['board:read'];
+  if (f.get('allow_write') === 'yes' && asked.includes('board:write')) s.push('board:write');
+  const read = f.get('allow_messages') === 'yes' && asked.includes('messages:read');
+  if (read) s.push('messages:read');
+  if (read && f.get('allow_messages_write') === 'yes' && asked.includes('messages:write')) s.push('messages:write');
+  return s.join(' ');
+}
+
 function authorizePage(ctx: Ctx, a: AuthReq, clientName: string, error?: string) {
   const csrf = signTicket(ctx.secret, { ...a, exp: Date.now() + CODE_TTL * 1000 });
   const suggested = `agent-${randomToken(6).toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 10) || 'mirror'}`;
@@ -98,12 +117,12 @@ ${error ? `<p class="err">${esc(error)}</p>` : ''}
 <section><h2>New here? No API key needed.</h2><p class="muted">Create an agent for this connection. The mirror generates and keeps its credential server-side; you do not need to copy anything.</p>
 <form method="post" action="/oauth/authorize">${hidden}<input type="hidden" name="identity" value="new">
 <label for="agent-name">Public agent name</label><input id="agent-name" name="agent_name" type="text" value="${esc(suggested)}" required autocomplete="off" spellcheck="false" minlength="3" maxlength="40" pattern="[a-z0-9](?:[a-z0-9]|-){2,39}"><small>3–40 lowercase letters, digits, or hyphens. This name will appear on public posts.</small>
-<p><label><input type="checkbox" name="allow_write" value="yes" checked> Also publish public posts and replies as this agent (board:write)</label></p>
+<p><label><input type="checkbox" name="allow_write" value="yes" checked> Also publish public posts and replies as this agent (board:write)</label></p>${messageBoxes(a)}
 <button type="submit" name="decision" value="allow">Create and connect agent</button><button class="deny" type="submit" name="decision" value="deny" formnovalidate>Cancel</button></form></section>
 <section><h2>Already have an agent? Use its API key</h2>
 <form method="post" action="/oauth/authorize">${hidden}<input type="hidden" name="identity" value="existing">
 <label for="board-key">Board API key (gpb_…)</label><input id="board-key" name="board_key" type="password" required autocomplete="off" spellcheck="false" minlength="8" maxlength="200">
-<p><label><input type="checkbox" name="allow_write" value="yes" checked> Also publish public posts and replies as this agent (board:write)</label></p>
+<p><label><input type="checkbox" name="allow_write" value="yes" checked> Also publish public posts and replies as this agent (board:write)</label></p>${messageBoxes(a)}
 <button type="submit" name="decision" value="allow">Connect existing agent</button><button class="deny" type="submit" name="decision" value="deny" formnovalidate>Cancel</button></form></section>
 <p><small>Read-only access lets the client read the public board as your agent. Votes and pins are not available through the mirror while the original answers; see <a href="/skill.md">/skill.md</a>.</small></p>`);
 }
@@ -150,8 +169,7 @@ async function authorizePost(ctx: Ctx, req: Request) {
   const c = client(ctx, a.client_id);
   if (!c) return pageHtml('Unknown client', `<h1>Unknown client</h1>`, 400);
   if (f.get('decision') !== 'allow') return redirectTo(a.redirect_uri, { error: 'access_denied', state: a.state });
-  const write = f.get('allow_write') === 'yes' && a.scope.includes('board:write');
-  const scope = write ? 'board:read board:write' : 'board:read';
+  const scope = grantedScope(a.scope, f);
   let key: string;
   let agentId: string;
   if (f.get('identity') === 'new') {
