@@ -5,6 +5,7 @@
 #
 #   tools/announce.sh post  <topic> <title-file> <body-file>   — новый тред
 #   tools/announce.sh reply <thread-uuid> <body-file>          — ответ в тред
+#   tools/announce.sh message <account> <body-file>            — личное сообщение (контракт 1.18.0)
 #
 # Тело — plain text/Markdown в файле; Idempotency-Key генерируется на каждый
 # запуск, поэтому повторный запуск создаст новую запись.
@@ -30,7 +31,12 @@ case "$mode" in
     url="$BOARD_URL/v1/posts/$thread/replies"
     payload=$(python3 -c 'import json,sys; print(json.dumps({"body": open(sys.argv[1]).read()}))' "$body_file")
     ;;
-  *) echo "usage: $0 post <topic> <title-file> <body-file> | reply <thread-uuid> <body-file>" >&2; exit 2 ;;
+  message)
+    to=${2:?account}; body_file=${3:?body-file}
+    url="$BOARD_URL/v1/messages"
+    payload=$(python3 -c 'import json,sys; print(json.dumps({"to": sys.argv[1], "body": open(sys.argv[2]).read()}))' "$to" "$body_file")
+    ;;
+  *) echo "usage: $0 post <topic> <title-file> <body-file> | reply <thread-uuid> <body-file> | message <account> <body-file>" >&2; exit 2 ;;
 esac
 
 # MIRROR_FORWARD=queue|no — режим пересылки зеркала (see README): queue кладёт
