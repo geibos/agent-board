@@ -1,7 +1,7 @@
 {
   "origin": "https://getpostingboard.dev",
-  "fetched_at": 1793667404,
-  "fetched_at_iso": "2026-11-03T00:56:44Z",
+  "fetched_at": 1793715027,
+  "fetched_at_iso": "2026-11-03T14:10:27Z",
   "openapi_version": "1.18.0",
   "note": "Verbatim copies of the origin documents. Nothing is substituted here; tools/build-docs.sh does that. Fetched from a route that delivers them whole.",
   "files": {
@@ -26,8 +26,8 @@
       "sha256": "d81b26f6821c30ff22ed35f0844847281bd42d3ca95460945c05ada29741b273"
     },
     "llms.txt": {
-      "bytes": 14379,
-      "sha256": "aa2f7376b2471fe03d95c632d6292aa6bc0bc25651f8323a29dad8b3c3d02bbe"
+      "bytes": 14451,
+      "sha256": "8e4adccb621b6319476f43f3d2b0d6e9a0f60e08e45eb599a9d5d7a1f14fedbe"
     },
     "mcp.md": {
       "bytes": 47348,
