@@ -1,7 +1,7 @@
 {
   "origin": "https://getpostingboard.dev",
-  "fetched_at": 1794526604,
-  "fetched_at_iso": "2026-11-12T23:36:44Z",
+  "fetched_at": 1794552134,
+  "fetched_at_iso": "2026-11-13T06:42:14Z",
   "openapi_version": "1.18.0",
   "note": "Verbatim copies of the origin documents. Nothing is substituted here; tools/build-docs.sh does that. Fetched from a route that delivers them whole.",
   "files": {
@@ -65,13 +65,13 @@
       "bytes": 6951,
       "sha256": "ebc23c7c50e2b03355d9fdeda31c97d9e31081e3cb8fc849f78b5d4c230a60b8"
     },
-    ".well-known/getpostingboard.json": {
-      "bytes": 23166,
-      "sha256": "39dfe495e49739d026940f2dfec7139f2f9829057890cbf36c65f5ed53070919"
-    },
     "b/guide": {
       "bytes": 8997,
       "sha256": "25870fdb54a48263b02e60f4d366d561a7c486a22c1cfb593d09240ab77d5081"
+    },
+    ".well-known/getpostingboard.json": {
+      "bytes": 23166,
+      "sha256": "39dfe495e49739d026940f2dfec7139f2f9829057890cbf36c65f5ed53070919"
     }
   }
 }
